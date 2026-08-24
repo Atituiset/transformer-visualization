@@ -552,6 +552,76 @@ function renderTokenChips(){
 })();
 
 /* ============================================================
+   模块4：位置编码
+   PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+   PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+   ============================================================ */
+class PositionalEncoding {
+  /**
+   * 生成位置编码矩阵。
+   * @param {number} maxLen 最大序列长度
+   * @param {number} dModel 隐藏维度
+   * @returns {tf.Tensor} 形状 [1, maxLen, dModel]
+   */
+  static encode(maxLen, dModel){
+    /* 纯 JS 填充（公式直观、无拼接技巧负担），再包为张量 */
+    const pe = new Float32Array(maxLen * dModel);
+    for(let pos = 0; pos < maxLen; pos++){
+      for(let i = 0; i < dModel; i += 2){
+        const denom = Math.pow(10000, (2 * i) / dModel);
+        pe[pos * dModel + i]     = Math.sin(pos / denom); // 偶数维
+        if(i + 1 < dModel)
+          pe[pos * dModel + i + 1] = Math.cos(pos / denom); // 奇数维
+      }
+    }
+    return tf.tensor3d(pe, [1, maxLen, dModel]);
+  }
+}
+
+/* ---------- 位置编码波形图（手写 SVG polyline，X=pos，Y=[-1,1]） ---------- */
+const PEWave = {
+  /** 展示的维度索引（超出 d_model 时自动截断过滤） */
+  DIMS: [0, 1, 4, 5, 16, 17, 64, 65],
+  W: 300, H: 170, PAD_L: 30, PAD_B: 22,
+
+  /**
+   * 绘制 seq_len 个位置、当前 d_model 下指定维度的波形。
+   * @param {number} seqLen 序列长度
+   * @param {number} dModel 当前隐藏维度
+   */
+  render(seqLen, dModel){
+    const host = document.getElementById('pe-wave');
+    const dims = this.DIMS.filter(d => d < dModel);
+    /* 多取一些位置让曲线更平滑（至少 32 个点） */
+    const data = tf.tidy(() =>
+      PositionalEncoding.encode(Math.max(seqLen, 32), dModel).arraySync()[0]);
+    const xs = v => this.PAD_L + v / Math.max(seqLen - 1, 1) * (this.W - this.PAD_L);
+    const ys = v => (this.H - this.PAD_B) / 2 - v * ((this.H - this.PAD_B) / 2 - 8);
+    const colors = ['#1a237e','#ff6f00','#2e7d32','#c62828',
+                    '#00838f','#6a1b9a','#ef6c00','#37474f'];
+    let svg = '<svg width="' + this.W + '" height="' + this.H +
+              '" role="img" aria-label="位置编码波形">';
+    svg += '<line x1="' + this.PAD_L + '" y1="' + ys(0) + '" x2="' + this.W +
+           '" y2="' + ys(0) + '" stroke="var(--c-border)" stroke-dasharray="3 3"/>';
+    svg += '<text x="2" y="' + (ys(1) + 4) + '" font-size="11" fill="var(--c-text-dim)">+1</text>';
+    svg += '<text x="2" y="' + (ys(-1) + 4) + '" font-size="11" fill="var(--c-text-dim)">-1</text>';
+    svg += '<text x="' + this.W + '" y="' + (this.H - 6) +
+           '" font-size="11" fill="var(--c-text-dim)" text-anchor="end">pos→</text>';
+    dims.forEach((d, k) => {
+      const pts = [];
+      for(let p = 0; p < seqLen; p++) pts.push(xs(p).toFixed(1) + ',' + ys(data[p][d]).toFixed(1));
+      const dimLabel = 'dim ' + d + (d % 2 ? '(cos)' : '(sin)');
+      svg += '<polyline points="' + pts.join(' ') +
+             '" fill="none" stroke="' + colors[k % colors.length] +
+             '" stroke-width="1.6" stroke-linejoin="round"><title>' + dimLabel + '</title></polyline>';
+    });
+    svg += '</svg>';
+    host.innerHTML = svg;
+    host.title = '曲线对应维度：' + dims.join(', ');
+  }
+};
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
@@ -572,6 +642,16 @@ function bindHyperPanel(){
 }
 bindHyperPanel();
 renderParamSummary();
+
+/* 位置编码波形：随序列长度与超参数变化刷新 */
+function curSeqLen(){
+  return tokenizer.tokenize(document.getElementById('input-text').value).length;
+}
+window.addEventListener('config-changed',
+  () => PEWave.render(curSeqLen(), Config.d_model));
+document.getElementById('input-text').addEventListener('input',
+  () => PEWave.render(curSeqLen(), Config.d_model));
+PEWave.render(curSeqLen(), Config.d_model);
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
