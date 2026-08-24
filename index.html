@@ -1534,16 +1534,18 @@ const MODULE_DETAILS = {
   },
   'spec': {
     title: '投机解码（Speculative Decoding · EAGLE）',
-    desc: '推理加速而非新模型：小草稿模型一次猜 k 个 token，大模型一次前向并行验证，拒绝采样保证输出分布与逐 token 生成完全一致——数学无损的 2-4× 提速。EAGLE 系用目标模型特征层 + MTP 式头做草稿，是当前工业默认。',
+    desc: '推理加速而非新模型：小草稿模型一次猜 k 个 token，大模型一次前向并行验证，拒绝采样保证输出分布与逐 token 生成完全一致——数学无损的 2-4× 提速。EAGLE 系用目标模型特征层 + MTP 式头做草稿，是当前工业默认。注意边界：投机解码不改结构/参数/训练目标，属「推理系统层」——与 KV Cache 管理（PagedAttention）、continuous batching、量化同层；架构决定一次前向算什么，它决定调用几次前向。',
     latex: [
       '\\text{接受率 }\\alpha=\\mathbb{E}\\big[\\min(1,p/q)\\big],\\quad \\text{期望加速}\\approx\\frac{1-\\alpha^{k+1}}{(1-\\alpha)}\\ \\text{倍}'
     ],
-    shapes: ['草稿 k token → 1 次并行验证','每步产出 ≥1 token'],
+    shapes: ['草稿 k token → 1 次并行验证','每步产出 ≥1 token','模型本身零改动'],
     code: "const draft = smallModel.kTokens(prefix, k);   // 猜 k 个\nconst p = targetModel.probs(prefix.concat(draft));\nconst out = rejectSample(draft, p);            // 无损验证",
-    params: '草稿模型 ~1/10 参数',
+    params: '草稿模型 ~1/10 参数（系统级额外开销）',
     refs: ['Leviathan et al. 2023 · Fast Inference from Transformers via Speculative Decoding',
            'Chen et al. 2023 · Accelerating LLM Decoding with Speculative Sampling',
-           'Li et al. 2024 · EAGLE-2']
+           'Li et al. 2024 · EAGLE-2',
+           'Kwon et al. 2023 · vLLM/PagedAttention（同属推理系统层）',
+           'Yu et al. 2022 · Orca（continuous batching，同属推理系统层）']
   },
 
   /* ============ 前沿探索 ============ */
@@ -1962,7 +1964,8 @@ const ARCH_VIEW_GEN = {
     { id:'mtp', x:60, y:210, label:'MTP 多 token 预测', sub:'DeepSeek-V3 · 一次预测多步', detail:'mtp',
       tip:'辅助头密集训练信号；推理时可当投机草稿' },
     { id:'spec', x:504, y:210, label:'投机解码', sub:'草稿模型 + 并行验证（EAGLE）', detail:'spec',
-      tip:'数学无损的 2-4× 解码加速' },
+      tip:'数学无损的 2-4× 解码加速；属推理系统层，非架构',
+      dashed:true, badge:'推理层' },
     { id:'diffusion', x:282, y:380, label:'扩散语言模型', sub:'LLaDA · Mercury 并行去噪', detail:'diffusion',
       tip:'从全掩码迭代去噪：打破左到右依赖' }
   ],
@@ -2127,7 +2130,28 @@ const ArchitectureRenderer = {
       .attr('transform', n => 'translate(' + n.x + ',' + n.y + ')');
     g.append('rect')
       .attr('width', nw).attr('height', ARCH_LAYOUT.nodeH)
-      .attr('rx', 9);
+      .attr('rx', 9)
+      .each(function(n){
+        /* dashed=true：模型外技术（推理系统层），虚线边框以示区分 */
+        if(n.dashed) d3.select(this).attr('stroke-dasharray','6 4');
+      });
+    /* 徽标：骑在节点上边缘的小标签（如「推理层」） */
+    g.filter(n => n.badge).each(function(n){
+      const s = d3.select(this);
+      const bw = n.badge.length * 10.5 + 16;
+      s.append('rect')
+        .attr('x', nw - bw - 6).attr('y', -9)
+        .attr('width', bw).attr('height', 15)
+        .attr('rx', 7.5)
+        .attr('fill', 'var(--c-accent)')
+        .attr('stroke', 'var(--c-card)').attr('stroke-width', 1.5);
+      s.append('text')
+        .attr('x', nw - 6 - bw / 2)
+        .attr('y', 2)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', 9.5).attr('font-weight', 700)
+        .attr('fill', '#fff').text(n.badge);
+    });
     g.append('text')
       .attr('x', nw/2).attr('y', n => n.sub ? 18 : 26)
       .attr('text-anchor','middle')
