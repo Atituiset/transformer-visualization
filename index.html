@@ -239,6 +239,29 @@ html[data-theme="dark"] #detail-panel .dp-title{color:var(--c-primary-light);}
 .dp-params{font-family:var(--font-mono);font-size:13px;}
 .dp-empty{color:var(--c-text-dim);line-height:1.6;}
 
+/* ---------- 抽屉：点击模块/步骤时的解释面板（默认隐藏） ---------- */
+#drawer-mask{position:fixed;inset:0;background:rgba(10,15,30,.32);opacity:0;
+  pointer-events:none;transition:opacity .22s;z-index:190;}
+#drawer-mask.open{opacity:1;pointer-events:auto;}
+#drawer{position:fixed;top:0;right:0;height:100%;width:min(400px,92vw);
+  background:var(--c-card);border-left:1px solid var(--c-border);
+  box-shadow:-6px 0 24px rgba(15,20,50,.18);z-index:200;
+  transform:translateX(103%);transition:transform .25s ease;
+  display:flex;flex-direction:column;}
+#drawer.open{transform:none;}
+.drawer-head{display:flex;justify-content:space-between;align-items:center;
+  padding:12px 14px;border-bottom:2px solid var(--c-accent);gap:8px;}
+#drawer-title{font-weight:700;color:var(--c-primary);font-size:14.5px;}
+html[data-theme="dark"] #drawer-title{color:var(--c-primary-light);}
+#drawer-close{border:none;background:transparent;font-size:15px;cursor:pointer;
+  color:var(--c-text-dim);padding:2px 8px;border-radius:6px;}
+#drawer-close:hover{background:var(--c-code-bg);color:var(--c-text);}
+#drawer-body{flex:1;overflow-y:auto;padding:12px 14px;}
+.dw-live{font-family:var(--font-mono);font-size:12.5px;background:var(--c-code-bg);
+  border-radius:8px;padding:8px 10px;line-height:1.7;margin:8px 0;}
+.dw-note{font-size:12.5px;color:var(--c-accent);margin:6px 0;line-height:1.6;}
+.dw-desc{font-size:12.5px;line-height:1.65;margin:2px 0 4px;}
+
 /* ---------- 右栏：数据流控制 ---------- */
 #panel-flow{max-height:calc(100vh - 90px);overflow-y:auto;}
 .chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
@@ -360,7 +383,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     </div>
 
     <div class="subcard" id="detail-panel">
-      <div class="dp-empty">点击左侧结构图中任意模块，此处将展示其数学公式、张量形状变化、核心代码与参数量。</div>
+      <div class="dp-empty">点击结构图中任意模块或日志中任意步骤，说明将以右侧抽屉展示（公式 / 形状 / 代码 / 参数量 / 论文线）。</div>
     </div>
   </section>
 
@@ -410,7 +433,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     </div>
 
     <ol id="step-log"></ol>
-    <div id="log-hint">💡 点击日志任意步骤，可从该步自动回放</div>
+    <div id="log-hint">💡 点击步骤：跳到该步并暂停 · 再点当前行：单步前进 · 点击行：跳转/回退</div>
 
     <div id="tensor-tracker"><b>当前张量</b><br>待运行…</div>
 
@@ -425,6 +448,16 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   </aside>
 
 </main>
+
+<!-- 解释抽屉：点击结构图模块 / 日志步骤时滑出（默认隐藏） -->
+<div id="drawer-mask"></div>
+<aside id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <span id="drawer-title">说明</span>
+    <button id="drawer-close" title="关闭（Esc）">✕ 关闭</button>
+  </div>
+  <div id="drawer-body"></div>
+</aside>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
@@ -1790,19 +1823,40 @@ const MODULE_DETAILS = {
   }
 };
 
-/* ---------- 详情面板渲染 ---------- */
+/* ---------- 解释抽屉（默认隐藏；Esc / 遮罩 / ✕ 关闭） ---------- */
+const Drawer = {
+  el: null, mask: null,
+  init(){
+    this.el = document.getElementById('drawer');
+    this.mask = document.getElementById('drawer-mask');
+    this.mask.addEventListener('click', () => this.close());
+    document.getElementById('drawer-close').addEventListener('click', () => this.close());
+    document.addEventListener('keydown', e => { if(e.key === 'Escape') this.close(); });
+  },
+  /** @param {string} title @param {string} html */
+  open(title, html){
+    document.getElementById('drawer-title').textContent = title;
+    document.getElementById('drawer-body').innerHTML = html;
+    this.el.classList.add('open');
+    this.mask.classList.add('open');
+    this.el.setAttribute('aria-hidden', 'false');
+  },
+  close(){
+    this.el.classList.remove('open');
+    this.mask.classList.remove('open');
+    this.el.setAttribute('aria-hidden', 'true');
+  }
+};
+Drawer.init();
+window.Drawer = Drawer;
+
+/* ---------- 详情面板渲染（渲染目标 = 抽屉） ---------- */
 const DetailPanel = {
-  /**
-   * 渲染指定节点的公式/形状/代码/参数量。
-   * @param {string} nodeId 架构节点 id
-   */
-  show(nodeId){
-    const det = MODULE_DETAILS[nodeId];
-    if(!det){ console.warn('未知节点详情:', nodeId); return; }
-    const panel = document.getElementById('detail-panel');
-    let html = '<div class="dp-title"><span>' + det.title + '</span>' +
-               '<span style="font-size:12px;color:var(--c-text-dim);font-weight:400;">' +
-               (det.desc || '') + '</span></div>';
+  /** 组装模块详情 HTML（desc/公式容器/形状/代码/参数/图示/论文线） */
+  buildHTML(det){
+    let html = '';
+    if(det.desc)
+      html += '<p class="dw-desc">' + det.desc + '</p>';
     html += '<div class="dp-sec"><span class="dp-label">数学公式</span><div class="dp-formula">';
     det.latex.forEach((tex, i) => {
       html += '<div id="dp-tex-' + i + '" style="margin:6px 0;"></div>';
@@ -1823,22 +1877,28 @@ const DetailPanel = {
       html += '<div class="dp-sec"><span class="dp-label">论文线</span><div class="dp-refs">' +
               det.refs.map(r => '<span class="dp-ref">📄 ' + r + '</span>').join('') +
               '</div></div>';
-    panel.innerHTML = html;
-    /* KaTeX 同步渲染（defer 脚本此时应已就绪） */
-    if(typeof katex !== 'undefined'){
-      det.latex.forEach((tex, i) => {
-        try{
-          katex.render(tex, document.getElementById('dp-tex-' + i),
-                       { throwOnError:false, displayMode:true });
-        }catch(e){
-          document.getElementById('dp-tex-' + i).textContent = tex;
-        }
-      });
-    }else{
-      det.latex.forEach((tex, i) => {
-        document.getElementById('dp-tex-' + i).textContent = tex;
-      });
-    }
+    return html;
+  },
+  /** KaTeX 渲染抽屉/面板内的公式容器 */
+  renderTex(det){
+    det.latex.forEach((tex, i) => {
+      const el = document.getElementById('dp-tex-' + i);
+      if(!el) return;
+      if(typeof katex !== 'undefined'){
+        try{ katex.render(tex, el, { throwOnError:false, displayMode:true }); }
+        catch(e){ el.textContent = tex; }
+      }else el.textContent = tex;
+    });
+  },
+  /**
+   * 打开模块详情抽屉（结构图节点点击入口）。
+   * @param {string} nodeId 模块详情键
+   */
+  show(nodeId){
+    const det = MODULE_DETAILS[nodeId];
+    if(!det){ console.warn('未知节点详情:', nodeId); return; }
+    Drawer.open(det.title, this.buildHTML(det));
+    this.renderTex(det);
   }
 };
 
@@ -2887,28 +2947,88 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const StepPlayer = {
   steps: [], apply: null, onDone: null,
+  /** 当前停留的步骤下标（-1 = 未开始） */
+  cursor: -1,
   /** 绑定步骤序列与单步应用函数（每个演示运行前调用） */
   arm(steps, apply, onDone){
     this.steps = steps; this.apply = apply; this.onDone = onDone || null;
+    this.cursor = -1;
   },
-  /** 从第 idx 行回放：截掉该行及之后，重新播放剩余步骤 */
-  replayFrom(idx){
+  /** 动画播放推进（由 DataFlowAnimator 调用） */
+  advance(s, i){ this.cursor = i; this.apply(s, i); },
+  /**
+   * 点击日志第 idx 行：
+   *  · 点当前行 → 单步前进（步进调试）
+   *  · 点前方行 → 快速补齐至该步并暂停
+   *  · 点后方行 → 回退到该步并暂停
+   *  · 在最后一步再点 → 触发 onDone（清除高亮）
+   */
+  goto(idx){
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
-    [...log.children].forEach((li, i) => { if(i >= idx) li.remove(); });
-    if(!this.steps.length || idx >= this.steps.length) return;
-    DataFlowAnimator.play(this.steps.slice(idx), {
-      onStep: (s, i) => this.apply(s, idx + i),
-      onDone: () => { if(this.onDone) this.onDone(); }
-    });
+    if(idx === this.cursor){
+      if(idx + 1 >= this.steps.length){
+        this.cursor = this.steps.length - 1;
+        if(this.onDone) this.onDone();
+        return;
+      }
+      idx = idx + 1;                       // 单步前进
+    }
+    if(idx > this.cursor){
+      for(let i = this.cursor + 1; i <= idx; i++){
+        this.cursor = i;
+        this.apply(this.steps[i], i);      // 快速补齐（同步，无动画间隔）
+      }
+    }else{
+      /* 回退：apply 每步恰好追加一行，故截掉 idx 及之后再重放该步 */
+      [...log.children].forEach((li, i) => { if(i >= idx) li.remove(); });
+      this.cursor = idx;
+      this.apply(this.steps[idx], idx);
+    }
+  },
+  /** 步骤解释：抽屉展示「这步在做什么」+ 实时张量信息 + 关联模块公式 */
+  explain(idx){
+    const s = this.steps[idx];
+    if(!s) return;
+    const det = (s.mod || s.moduleId) ? MODULE_DETAILS[s.mod || s.moduleId] : null;
+    const kindTitle = { tok:'分词', emb:'Embedding 查表', rope:'RoPE 旋转位置编码',
+      attn:'掩码自注意力', res1:'残差连接', res2:'残差连接', ffn:'前馈网络',
+      router:'MoE Router 门控', wsum:'稀疏加权合成', head:'LM Head',
+      gen:'逐词生成', note:'说明', end:'结束' }[s.kind] || '步骤说明';
+    let html = '';
+    if(s.note) html += '<p class="dw-note">' + s.note + '</p>';
+    const live = [];
+    if(s.shape) live.push('形状 <b>' + s.shape + '</b>');
+    if(s.stats) live.push('min ' + s.stats.min + ' · max ' + s.stats.max +
+                          ' · mean ' + s.stats.mean);
+    if(s.ms !== undefined) live.push('耗时 ' + s.ms + ' ms');
+    if(s.tokens) live.push('tokens：' + s.tokens.join(' / '));
+    if(live.length) html += '<div class="dw-live">' + live.join('<br>') + '</div>';
+    if(det){
+      html += '<div class="dp-sec"><span class="dp-label">这一步在做什么</span>' +
+              '<p class="dw-desc">' + det.desc + '</p></div>';
+      html += '<div class="dp-sec"><span class="dp-label">数学公式</span><div class="dp-formula">' +
+              det.latex.map((t, i) =>
+                '<div id="dp-tex-' + i + '" style="margin:6px 0;"></div>').join('') +
+              '</div></div>';
+      html += '<div class="dp-sec"><span class="dp-label">参数量</span>' +
+              '<span class="dp-params">' + det.params + '</span></div>';
+      if(det.refs && det.refs.length)
+        html += '<div class="dp-sec"><span class="dp-label">论文线</span><div class="dp-refs">' +
+                det.refs.map(r => '<span class="dp-ref">📄 ' + r + '</span>').join('') +
+                '</div></div>';
+    }
+    Drawer.open(s.label || kindTitle, html);
+    if(det) DetailPanel.renderTex(det);
   }
 };
-/* 事件委托：点击日志任意行 → 从该步回放 */
+/* 事件委托：点击日志任意行 → 跳转/步进 + 抽屉解释 */
 document.getElementById('step-log').addEventListener('click', e => {
   const li = e.target.closest('li');
   if(!li || !li.parentNode) return;
   const idx = [...li.parentNode.children].indexOf(li);
-  StepPlayer.replayFrom(idx);
+  StepPlayer.goto(idx);
+  StepPlayer.explain(idx);
 });
 
 /** Top-5 概率 → 下一个 token（公共工具） */
@@ -2943,7 +3063,7 @@ const DecoderDemo = {
     const tokens = tokenizer.tokenize(text);
     const srcIds = toIds(tokens);
     /* 预计算全部生成步（D8：权重随机，仅展示机制） */
-    const steps = [{ kind: 'note' }];
+    const steps = [{ kind: 'note', label: '演示说明' }];
     const data = [];
     let target = [window.Vocab.indexOf('<bos>')];
     const generated = ['<bos>'];
@@ -2956,12 +3076,15 @@ const DecoderDemo = {
       data.push({ prefix: generated.slice(), top5, chosen: window.Vocab[next],
                   p: r.probs[next], ms, selfW: r.selfWeights,
                   crossW: r.crossWeights, showCross: s % 2 === 1 });
-      steps.push({ kind: 'gen', di: data.length - 1 });
+      steps.push({ kind: 'gen', di: data.length - 1,
+        mod: s % 2 === 1 ? 'dec-cross' : 'dec-masked-mha',
+        label: '生成第 ' + (s + 1) + ' 步',
+        note: '前缀「' + generated.join(' ') + '」→ 选中「' + window.Vocab[next] + '」' });
       target.push(next);
       generated.push(window.Vocab[next]);
       if(next === window.Vocab.indexOf('<eos>')) break;
     }
-    steps.push({ kind: 'end', tokens: generated.slice(1) });
+    steps.push({ kind: 'end', tokens: generated.slice(1), mod: 'out', label: '生成结束' });
 
     StepPlayer.arm(steps, (s) => {
       const li = document.getElementById('step-log');
@@ -3010,7 +3133,7 @@ const DecoderDemo = {
         : document.getElementById('tensor-tracker').innerHTML;
     }, () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.apply(s, i),
+      onStep: (s, i) => StepPlayer.advance(s, i),
       onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   }
@@ -3040,32 +3163,39 @@ const DenseDemo = {
           hkv = modernModel.dense.hkv, h = modernModel.dense.h;
 
     const steps = [
-      { kind: 'tok', tokens },
-      { kind: 'emb', shape: fmtShape(shapeOf(collect.emb)), stats: statsOf(collect.emb),
+      { kind: 'tok', mod: 'input', label: '分词', tokens },
+      { kind: 'emb', mod: 'embed', label: 'Embedding 查表',
+        shape: fmtShape(shapeOf(collect.emb)), stats: statsOf(collect.emb),
         note: 'LLaMA 式：查表后不乘 √d_model' },
-      { kind: 'rope', note: 'RoPE 在每层注意力内旋转 Q/K（范数不变）' }
+      { kind: 'rope', mod: 'rope', label: 'RoPE 旋转位置编码',
+        note: 'RoPE 在每层注意力内旋转 Q/K（范数不变）' }
     ];
     collect.layers.forEach((s, i) => {
-      steps.push({ kind: 'attn', i, shape: fmtShape(shapeOf(s.attnOut)),
+      steps.push({ kind: 'attn', mod: 'gqa', i, label: '第 ' + (i + 1) + ' 层 · GQA 注意力',
+        shape: fmtShape(shapeOf(s.attnOut)),
         stats: statsOf(s.attnOut), note: 'RMSNorm→RoPE→GQA ' + h + 'Q/' + hkv +
         'KV · 注意力已同步热力图' });
-      steps.push({ kind: 'res1', i, shape: fmtShape(shapeOf(s.afterRes1)),
+      steps.push({ kind: 'res1', mod: 'addnorm', i, label: '第 ' + (i + 1) + ' 层 · ⊕ 残差',
+        shape: fmtShape(shapeOf(s.afterRes1)),
         stats: statsOf(s.afterRes1), note: '⊕ 残差（Pre-Norm 旁路）' });
-      steps.push({ kind: 'ffn', i, shape: fmtShape(shapeOf(s.ffnMid)),
+      steps.push({ kind: 'ffn', mod: 'swiglu', i, label: '第 ' + (i + 1) + ' 层 · SwiGLU FFN',
+        shape: fmtShape(shapeOf(s.ffnMid)),
         stats: statsOf(s.ffnMid), note: 'SiLU 门控 × 上投影，d_ff=' + dff });
-      steps.push({ kind: 'res2', i, shape: fmtShape(shapeOf(s.afterRes2)),
+      steps.push({ kind: 'res2', mod: 'addnorm', i, label: '第 ' + (i + 1) + ' 层 · ⊕ 残差',
+        shape: fmtShape(shapeOf(s.afterRes2)),
         stats: statsOf(s.afterRes2) });
     });
     const lastProbs = r.probs[r.probs.length - 1];
     const { top5 } = top5Of(lastProbs);
-    steps.push({ kind: 'head', top5, shape: '[' + tokens.length + ', ' + window.Vocab.length + ']',
+    steps.push({ kind: 'head', mod: 'lm-head', label: 'LM Head（权重绑定）', top5,
+      shape: '[' + tokens.length + ', ' + window.Vocab.length + ']',
       ms: totalMs, note: 'Final RMSNorm → h·Eᵀ（权重绑定），预测下一个 token' });
 
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s), () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.apply(s, i),
+      onStep: (s, i) => StepPlayer.advance(s, i),
       onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   },
@@ -3082,7 +3212,7 @@ const DenseDemo = {
     const tokens = tokenizer.tokenize(text);
     const ids = toIds(tokens);
     ensureModern(modernModel.dense);
-    const steps = [{ kind: 'note' }];
+    const steps = [{ kind: 'note', label: '演示说明' }];
     const data = [];
     let prefix = ids.slice();
     const genToks = [];
@@ -3095,17 +3225,19 @@ const DenseDemo = {
       data.push({ prefix: tokenizer.tokenize(text).concat(genToks),
                   top5, chosen: window.Vocab[next], p: r.probs[r.probs.length-1][next],
                   ms, attn: collect.attn });
-      steps.push({ kind: 'gen', di: data.length - 1 });
+      steps.push({ kind: 'gen', di: data.length - 1, mod: 'lm-head',
+        label: '生成第 ' + (s + 1) + ' 步',
+        note: '前缀 ' + (prefix.length + 1) + ' tokens → 选中「' + window.Vocab[next] + '」' });
       prefix = prefix.concat([next]);
       genToks.push(window.Vocab[next]);
       if(next === window.Vocab.indexOf('<eos>')) break;
     }
-    steps.push({ kind: 'end', tokens: genToks });
+    steps.push({ kind: 'end', tokens: genToks, mod: 'lm-head', label: '生成结束' });
     this._genData = data;
 
     StepPlayer.arm(steps, (s) => this._applyGen(s), () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.apply(s, i),
+      onStep: (s, i) => StepPlayer.advance(s, i),
       onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   },
@@ -3214,29 +3346,34 @@ const MoEDemo = {
     const E = modernModel.moe.nExperts;
 
     const steps = [
-      { kind: 'note', html: '⚠️ 权重随机初始化——展示 Router Top-2 稀疏激活的真实前向；' +
+      { kind: 'note', label: '演示说明',
+        html: '⚠️ 权重随机初始化——展示 Router Top-2 稀疏激活的真实前向；' +
         '示意实现全专家计算后按门控合成，真实推理只算被选中专家（激活参数 ≈ 2/' + E + '）。' },
-      { kind: 'tok', tokens }
+      { kind: 'tok', mod: 'input', label: '分词', tokens }
     ];
     collect.layers.forEach((s, i) => {
-      steps.push({ kind: 'attn', i, shape: fmtShape(shapeOf(s.attnOut)),
+      steps.push({ kind: 'attn', mod: 'gqa', i, label: '第 ' + (i + 1) + ' 层 · GQA 注意力',
+        shape: fmtShape(shapeOf(s.attnOut)),
         stats: statsOf(s.attnOut), note: 'RMSNorm→RoPE→GQA 掩码自注意力' });
-      steps.push({ kind: 'res1', i, shape: fmtShape(shapeOf(s.afterRes1)),
+      steps.push({ kind: 'res1', mod: 'addnorm', i, label: '第 ' + (i + 1) + ' 层 · Add & Norm',
+        shape: fmtShape(shapeOf(s.afterRes1)),
         stats: statsOf(s.afterRes1) });
-      steps.push({ kind: 'router', i, gates: s.gates,
+      steps.push({ kind: 'router', mod: 'moe-router', i, gates: s.gates,
+        label: '第 ' + (i + 1) + ' 层 · Router 门控',
         note: '每 token softmax→Top-2，其余专家门控置 0' });
-      steps.push({ kind: 'wsum', i, shape: fmtShape(shapeOf(s.afterRes2)),
+      steps.push({ kind: 'wsum', mod: 'moe-sum', i, label: '第 ' + (i + 1) + ' 层 · 加权合成',
+        shape: fmtShape(shapeOf(s.afterRes2)),
         stats: statsOf(s.afterRes2), note: 'y = Σ gᵢ·Expertᵢ(x)，⊕残差后输出' });
     });
     const { top5 } = top5Of(r.probs[r.probs.length - 1]);
-    steps.push({ kind: 'end', top5,
+    steps.push({ kind: 'end', mod: 'lm-head', label: 'LM Head 与专家负载', top5,
       tokens: collect.layers.map(s => s.gates) });
 
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s, tokens), () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.apply(s, i),
+      onStep: (s, i) => StepPlayer.advance(s, i),
       onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   },
@@ -3537,7 +3674,7 @@ const App = {
     StepPlayer.arm(result.steps, (s, idx) => this._applyStep(s, idx),
       () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(result.steps, {
-      onStep: (s, idx) => StepPlayer.apply(s, idx),
+      onStep: (s, idx) => StepPlayer.advance(s, idx),
       onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   },
