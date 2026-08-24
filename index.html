@@ -912,15 +912,24 @@ class DecoderLayer {
    * @param {tf.Tensor} x 解码器输入 [B,Lt,d]
    * @param {tf.Tensor} encOut 编码器记忆 [B,Ls,d]
    * @param {tf.Tensor} selfMask 因果掩码 [1,1,Lt,Lt]
+   * @param {Object|null} collect 子阶段快照收集器（演示传播可视化用，仅末层传入）：
+   *        {afterSelf, afterLn1, afterCross, afterLn2, afterFfn, afterLn3}
    * @returns {{output:tf.Tensor, selfWeights:Object, crossWeights:Object}}
    */
-  forward(x, encOut, selfMask){
+  forward(x, encOut, selfMask, collect = null){
     return tf.tidy(() => {
       const s = this.selfMha.forward(x, x, x, selfMask);
+      if(collect) collect.afterSelf = s.output.arraySync();
       const h1 = this.ln1.normalize(x.add(s.output));
+      if(collect) collect.afterLn1 = h1.arraySync();
       const c = this.crossMha.forward(h1, encOut, encOut, null);
+      if(collect) collect.afterCross = c.output.arraySync();
       const h2 = this.ln2.normalize(h1.add(c.output));
-      const out = this.ln3.normalize(h2.add(this.ffn.forward(h2)));
+      if(collect) collect.afterLn2 = h2.arraySync();
+      const f = this.ffn.forward(h2);
+      if(collect) collect.afterFfn = f.arraySync();
+      const out = this.ln3.normalize(h2.add(f));
+      if(collect) collect.afterLn3 = out.arraySync();
       return { output: out, selfWeights: s.weights, crossWeights: c.weights };
     });
   }
@@ -1027,9 +1036,10 @@ class Transformer {
    * 内部在同一 tidy 中重算编码器得到张量形式的 K/V 记忆。
    * @param {number[]} targetIds 目标前缀索引（首元素为 <bos> 的索引）
    * @param {number[]} srcIds 源序列索引
+   * @param {Object|null} collect 子阶段快照收集器（末层解码层的传播可视化）
    * @returns {{logits:number[], probs:number[], selfWeights, crossWeights, decFinal:number[][][]}}
    */
-  decodeStep(targetIds, srcIds){
+  decodeStep(targetIds, srcIds, collect = null){
     return tf.tidy(() => {
       const mem = this._encodeTensor(srcIds);          // [1,Ls,d]
       const Lt = targetIds.length;
@@ -1040,8 +1050,10 @@ class Transformer {
       y = y.add(this.pe.slice([0, 0, 0], [1, Lt, Config.d_model]));
       const selfMask = causalMask(Lt);
       let sw = null, cw = null;
-      for(const layer of this.decLayers){
-        const r = layer.forward(y, mem, selfMask);
+      const lastLayer = this.decLayers.length - 1;
+      for(let li = 0; li < this.decLayers.length; li++){
+        const r = this.decLayers[li].forward(
+          y, mem, selfMask, collect && li === lastLayer ? collect : null);
         y = r.output; sw = r.selfWeights; cw = r.crossWeights;
       }
       /* 取最后位置的隐状态 [1,1,d] 做输出投影 → logits [1,1,V] → softmax 概率 */
@@ -3154,18 +3166,36 @@ const DecoderDemo = {
     let target = [window.Vocab.indexOf('<bos>')];
     const generated = ['<bos>'];
     const maxSteps = Math.min(tokens.length + 3, 8);
+    const SUBS = [
+      ['dec-masked-mha', '掩码自注意力（因果）'],
+      ['dec-an1',        'Add & Norm'],
+      ['dec-cross',      '交叉注意力（读编码器记忆）'],
+      ['dec-an2',        'Add & Norm'],
+      ['dec-ffn',        '前馈网络 FFN'],
+      ['dec-an3',        'Add & Norm'],
+      ['out',            'Linear + Softmax → 预测下一词']
+    ];
     for(let s = 0; s < maxSteps; s++){
       const t0 = performance.now();
-      const r = transformer.decodeStep(target, srcIds);
+      const collect = {};
+      const r = transformer.decodeStep(target, srcIds, collect);
       const ms = +(performance.now() - t0).toFixed(1);
       const { top5, next } = top5Of(r.probs);
+      const di = data.length;
       data.push({ prefix: generated.slice(), top5, chosen: window.Vocab[next],
                   p: r.probs[next], ms, selfW: r.selfWeights,
                   crossW: r.crossWeights, showCross: s % 2 === 1 });
-      steps.push({ kind: 'gen', di: data.length - 1,
-        mod: s % 2 === 1 ? 'dec-cross' : 'dec-masked-mha',
-        label: '生成第 ' + (s + 1) + ' 步',
-        note: '前缀「' + generated.join(' ') + '」→ 选中「' + window.Vocab[next] + '」' });
+      /* 传播子步：高亮沿 Decoder 列逐框下行 */
+      SUBS.forEach(([mod, label], si) => {
+        const key = ['afterSelf','afterLn1','afterCross','afterLn2','afterFfn','afterLn3'][si];
+        steps.push({ kind: si === 6 ? 'gen-head' : 'gen-sub', di, si, mod,
+          label: '第 ' + (s + 1) + ' 步 · ' + label,
+          shape: key ? fmtShape(shapeOf(collect[key])) : '[1, 1, ' + window.Vocab.length + ']',
+          stats: key ? statsOf(collect[key]) : null,
+          note: si === 0 ? '热力图=掩码自注意力'
+              : si === 2 ? '热力图=交叉注意力（Q←解码器，K/V←编码器）'
+              : si === 6 ? '选中「' + window.Vocab[next] + '」作为下一步输入' : null });
+      });
       target.push(next);
       generated.push(window.Vocab[next]);
       if(next === window.Vocab.indexOf('<eos>')) break;
@@ -3178,33 +3208,48 @@ const DecoderDemo = {
         li.insertAdjacentHTML('beforeend',
           '<li><span class="log-note">⚠️ 权重为随机初始化，生成文本无语言意义——' +
           '本演示展示因果掩码、交叉注意力与逐词预测机制。</span></li>');
-        ArchitectureRenderer.highlight(['dec-input', 'dec-embed']);
+        ArchitectureRenderer.highlight(['dec-input']);
         return;
       }
-      if(s.kind === 'gen'){
+      if(s.kind === 'gen-sub'){
         const d = data[s.di];
-        AttentionHeatmap.setDual(
-          { tokens: d.prefix,
-            layers: [{ pre: d.selfW.pre, post: d.selfW.post }], kind: 'self' },
-          { tokens: d.prefix, colTokens: tokens,
-            layers: [{ pre: d.crossW.pre, post: d.crossW.post }], kind: 'cross' });
-        ArchitectureRenderer.highlight(d.showCross
-          ? ['dec-cross', 'out'] : ['dec-masked-mha', 'out']);
+        if(s.si === 0){
+          /* 装载双份注意力（自/交叉），默认展示掩码自注意力 */
+          AttentionHeatmap.setDual(
+            { tokens: d.prefix,
+              layers: [{ pre: d.selfW.pre, post: d.selfW.post }], kind: 'self' },
+            { tokens: d.prefix, colTokens: tokens,
+              layers: [{ pre: d.crossW.pre, post: d.crossW.post }], kind: 'cross' });
+        }else if(s.si === 2){
+          AttentionHeatmap.setKind('cross');
+        }
+        ArchitectureRenderer.highlight([s.mod]);
         li.insertAdjacentHTML('beforeend',
-          '<li class="current"><span class="log-step">第 ' + (s.di + 1) +
-          ' 步 · 前缀「' + d.prefix.join(' ') + '」</span>' +
+          '<li class="current"><span class="log-step">' + s.label + '</span>' +
+          '<span class="log-shape">' + s.shape + '</span>' +
+          (s.note ? '<span class="log-meta" style="color:var(--c-accent);">' +
+            s.note + '</span>' : '') +
+          (s.stats ? '<span class="log-meta">min ' + s.stats.min + ' · max ' +
+            s.stats.max + ' · mean ' + s.stats.mean + '</span>' : '') +
+          '</li>');
+      }else if(s.kind === 'gen-head'){
+        const d = data[s.di];
+        ArchitectureRenderer.highlight(['out']);
+        li.insertAdjacentHTML('beforeend',
+          '<li class="current"><span class="log-step">' + s.label + '</span>' +
           TopKChart.render(d.top5) +
           '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
-          ' · ' + d.ms + ' ms' +
-          (d.showCross ? ' · 热力图=交叉注意力' : ' · 热力图=自注意力(掩码)') +
-          '</span></li>');
+          ' · 整步耗时 ' + d.ms + ' ms</span></li>');
+        document.getElementById('tensor-tracker').innerHTML =
+          '<b>Decoder 第 ' + (s.di + 1) + ' 步</b><br>logits <b>[1, 1, ' +
+          window.Vocab.length + ']</b><br>softmax 后概率和 = 1<br>耗时 ' + d.ms + ' ms';
       }else if(s.kind === 'end'){
         li.insertAdjacentHTML('beforeend',
           '<li><span class="log-step">生成结束：</span>' +
           (s.tokens.length
             ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
             : '（未产生 token）') + '</li>');
-        ArchitectureRenderer.clearHighlight();
+        ArchitectureRenderer.highlight(['out']);
         return;
       }
       const rows = li.children;
@@ -3212,11 +3257,6 @@ const DecoderDemo = {
         if(row !== li.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
       });
       li.lastElementChild.scrollIntoView({ block:'nearest' });
-      const d = s.kind === 'gen' ? data[s.di] : null;
-      document.getElementById('tensor-tracker').innerHTML = d
-        ? '<b>Decoder 第 ' + (s.di + 1) + ' 步</b><br>logits <b>[1, 1, ' +
-          window.Vocab.length + ']</b><br>softmax 后概率和 = 1<br>耗时 ' + d.ms + ' ms'
-        : document.getElementById('tensor-tracker').innerHTML;
     }, () => ArchitectureRenderer.clearHighlight());
     StepPlayer.startPaused();
   }
@@ -3354,7 +3394,7 @@ const DenseDemo = {
       log.insertAdjacentHTML('beforeend', logRowHTML(
         { label: '第 ' + (s.i + 1) + ' 层 · ⊕ 残差', shape: s.shape, stats: s.stats }, 6 + s.i * 4));
     }else if(s.kind === 'head'){
-      ArchitectureRenderer.highlight(['lnf', 'head']);
+      ArchitectureRenderer.highlight(['head']);
       log.insertAdjacentHTML('beforeend',
         '<li class="current"><span class="log-step">Final RMSNorm + LM Head（权重绑定）</span>' +
         '<span class="log-shape">[1, L, ' + Config.d_model + '] → ' + s.shape + '</span>' +
@@ -3488,12 +3528,12 @@ const MoEDemo = {
         '<b>MoE Router</b> · 第 ' + (s.i + 1) + ' 层<br>' +
         'gate logits [1, L, 4] → Top-2<br>总参数 ∝ E · 激活参数 ∝ K/E';
     }else if(s.kind === 'wsum'){
-      ArchitectureRenderer.highlight(['wsum', 'an2']);
+      ArchitectureRenderer.highlight(['wsum']);
       log.insertAdjacentHTML('beforeend', logRowHTML(
         { label: '第 ' + (s.i + 1) + ' 层 · 稀疏加权合成 + Add & Norm',
           shape: s.shape, stats: s.stats, note: s.note }, 0));
     }else if(s.kind === 'end'){
-      ArchitectureRenderer.highlight(['lnf', 'head']);
+      ArchitectureRenderer.highlight(['lnf']);
       /* 全层专家负载统计 */
       const load = [0, 0, 0, 0];
       s.tokens.forEach(gates => gates.forEach(g => {
