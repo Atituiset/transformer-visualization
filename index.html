@@ -622,6 +622,113 @@ const PEWave = {
 };
 
 /* ============================================================
+   模块5：核心注意力算子
+   Attention(Q,K,V) = softmax(QKᵀ / √dk + mask) V
+   ============================================================ */
+/**
+ * 生成因果掩码（下三角 0，其余 -1e9），广播到 [1,1,L,L]。
+ * @param {number} L 序列长度
+ * @returns {tf.Tensor}
+ */
+function causalMask(L){
+  return tf.tidy(() => tf.where(
+    tf.greater(tf.range(0, L).reshape([1, L]),
+               tf.range(0, L).reshape([L, 1])),
+    tf.fill([L, L], -1e9), tf.zeros([L, L])
+  ).reshape([1, 1, L, L]));
+}
+
+/** Glorot 初始化（√(2/(fanIn+fanOut)) 标准差的正态近似） */
+function glorotInit(shape){
+  const std = Math.sqrt(2 / (shape[0] + shape[1]));
+  return tf.randomNormal(shape, 0, std);
+}
+
+class ScaledDotProductAttention {
+  /**
+   * 单头缩放点积注意力（整个计算包在 tidy 中，张量仅 output 逃逸）。
+   * @param {tf.Tensor} Q [B,H,Lq,dk]
+   * @param {tf.Tensor} K [B,H,Lk,dk]
+   * @param {tf.Tensor} V [B,H,Lk,dv]
+   * @param {tf.Tensor|null} maskAdd 可广播到 [B,H,Lq,Lk] 的加性掩码
+   * @returns {{output:tf.Tensor, pre:number[][][], post:number[][][]}}
+   *          pre=缩放后未掩码分数、post=掩码后 softmax 概率（[H,L,L] 快照）
+   */
+  forward(Q, K, V, maskAdd = null){
+    return tf.tidy(() => {
+      const dk = Q.shape[Q.shape.length - 1];
+      const scores  = tf.matMul(Q, K, false, true).div(Math.sqrt(dk));
+      const masked  = maskAdd ? scores.add(maskAdd) : scores;
+      const weights = tf.softmax(masked, -1);
+      const pre  = scores.arraySync()[0];
+      const post = weights.arraySync()[0];
+      return { output: tf.matMul(weights, V), pre, post };
+    });
+  }
+}
+
+class MultiHeadAttention {
+  /**
+   * @param {number} dModel 隐藏维度 d（需被头数整除）
+   * @param {number} numHeads 头数 h
+   */
+  constructor(dModel, numHeads){
+    this.dModel = dModel;
+    this.numHeads = numHeads;
+    this.dh = dModel / numHeads;
+    /* 包装为变量后立刻释放初始化器，避免后端缓冲区泄漏 */
+    this.WQ = MultiHeadAttention.mkVar(glorotInit([dModel, dModel]));
+    this.WK = MultiHeadAttention.mkVar(glorotInit([dModel, dModel]));
+    this.WV = MultiHeadAttention.mkVar(glorotInit([dModel, dModel]));
+    this.WO = MultiHeadAttention.mkVar(glorotInit([dModel, dModel]));
+    this.bQ = MultiHeadAttention.mkVar(tf.zeros([dModel]));
+    this.bK = MultiHeadAttention.mkVar(tf.zeros([dModel]));
+    this.bV = MultiHeadAttention.mkVar(tf.zeros([dModel]));
+    this.bO = MultiHeadAttention.mkVar(tf.zeros([dModel]));
+    this.sdpa = new ScaledDotProductAttention();
+  }
+  /** 张量包装为可训练变量，并释放原初始化张量 */
+  static mkVar(t){
+    const v = tf.variable(t);
+    t.dispose();
+    return v;
+  }
+  /** [B,L,D] → [B,H,L,dh]：拆出多头 */
+  splitHeads(x){
+    const B = x.shape[0], L = x.shape[1];
+    return x.reshape([B, L, this.numHeads, this.dh]).transpose([0, 2, 1, 3]);
+  }
+  /** [B,H,L,dh] → [B,L,D]：合并多头 */
+  combineHeads(x){
+    const B = x.shape[0], L = x.shape[2];
+    return x.transpose([0, 2, 1, 3]).reshape([B, L, this.dModel]);
+  }
+  /**
+   * 多头注意力前向。自注意力传同一张量；交叉注意力 Q 来自解码器、K/V 来自编码器输出。
+   * @param {tf.Tensor} Qin [B,Lq,d]
+   * @param {tf.Tensor} Kin [B,Lk,d]
+   * @param {tf.Tensor} Vin [B,Lk,d]
+   * @param {tf.Tensor|null} maskAdd 加性掩码
+   * @returns {{output:tf.Tensor, weights:{pre:number[][][],post:number[][][]}}}
+   */
+  forward(Qin, Kin, Vin, maskAdd = null){
+    return tf.tidy(() => {
+      const Q = this.splitHeads(Qin.matMul(this.WQ).add(this.bQ));
+      const K = this.splitHeads(Kin.matMul(this.WK).add(this.bK));
+      const V = this.splitHeads(Vin.matMul(this.WV).add(this.bV));
+      const r = this.sdpa.forward(Q, K, V, maskAdd);
+      const output = this.combineHeads(r.output).matMul(this.WO).add(this.bO);
+      return { output, weights: { pre: r.pre, post: r.post } };
+    });
+  }
+  /** 释放本层全部变量 */
+  dispose(){
+    [this.WQ,this.WK,this.WV,this.WO,this.bQ,this.bK,this.bV,this.bO]
+      .forEach(v => v.dispose());
+  }
+}
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
