@@ -932,6 +932,173 @@ transformer.build();
 window.addEventListener('config-changed', () => transformer.build());
 
 /* ============================================================
+   模块7：模块详情注册表 + KaTeX 详情面板
+   （键 = 架构图节点 id；spec「关键公式」全量收录）
+   ============================================================ */
+const MODULE_DETAILS = {
+  'input': {
+    title: '输入 Tokens',
+    desc: '源序列经分词得到 token 序列，再映射为词表索引。',
+    latex: ['x=[x_1,x_2,\\dots,x_n],\\; x_i\\in\\mathbb{Z},\\; x_i<|V|'],
+    shapes: ['[seq_len]', '[batch, seq_len, d_model]'],
+    code: "const ids = tokens.map(t => Vocab.indexOf(t));\nconst idx = tf.tensor1d(ids, 'int32');",
+    params: '0（仅查索引）'
+  },
+  'embed': {
+    title: '输入嵌入层（Embedding）',
+    desc: '词表索引映射为 d_model 维向量，并乘 √d_model 放大（原论文做法），随后与位置编码相加。',
+    latex: [
+      '\\text{Emb}(x)=E[x]\\cdot\\sqrt{d_{model}}',
+      'E\\in\\mathbb{R}^{|V|\\times d_{model}}'
+    ],
+    shapes: ['[batch, seq_len]', '[batch, seq_len, d_model]'],
+    code: "const emb = tf.gather(E, ids)\n            .mul(Math.sqrt(dModel))\n            .reshape([1, seqLen, dModel]);",
+    params: 'V × d_model'
+  },
+  'pe': {
+    title: '位置编码（Positional Encoding）',
+    desc: '正弦/余弦函数为每个位置生成唯一的“时钟指纹”，使模型感知词序；与嵌入逐元素相加。',
+    latex: [
+      'PE_{(pos,\\,2i)}=\\sin\\!\\left(\\frac{pos}{10000^{2i/d_{model}}}\\right)',
+      'PE_{(pos,\\,2i+1)}=\\cos\\!\\left(\\frac{pos}{10000^{2i/d_{model}}}\\right)'
+    ],
+    shapes: ['[1, max_len, d_model]', '相加后 [batch, seq_len, d_model]'],
+    code: "const denom = Math.pow(10000, (2 * i) / dModel);\npe[pos*dModel+i]   = Math.sin(pos / denom); // 偶数维\npe[pos*dModel+i+1] = Math.cos(pos / denom); // 奇数维\nconst peTensor = tf.tensor3d(pe, [1, maxLen, dModel]);",
+    params: '0（固定函数，无可训练参数）'
+  },
+  'enc-mha': {
+    title: '多头自注意力（Multi-Head Self-Attention）',
+    desc: '每个位置同时作为 Query/Key/Value，从全序列聚合信息；h 个头在不同子空间并行计算后拼接。',
+    latex: [
+      '\\text{Attention}(Q,K,V)=\\text{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V',
+      '\\text{head}_i=\\text{Attention}(QW_i^Q,\\,KW_i^K,\\,VW_i^V)',
+      '\\text{MultiHead}(Q,K,V)=\\text{Concat}(\\text{head}_1,\\dots,\\text{head}_h)\\,W^O'
+    ],
+    shapes: ['[batch, seq_len, d_model]', '中间 [batch, h, seq_len, d_k]', '[batch, seq_len, d_model]'],
+    code: "const scores  = tf.matMul(Q, K, false, true).div(Math.sqrt(dk));\nconst weights = tf.softmax(scores, -1);          // [B,H,L,L]\nconst output  = tf.matMul(weights, V);           // 加权求和 V\n// 多头：reshape([B,L,h,dh]).transpose([0,2,1,3]) 拆头，逆操作拼回",
+    params: '4·(d² + d)　（W^Q,W^K,W^V,W^O 及偏置）'
+  },
+  'dec-masked-mha': {
+    title: '掩码多头自注意力（Decoder）',
+    desc: '解码器只能看见已生成的前缀：上三角位置在 softmax 前被置为 −∞，概率归零，防止“偷看未来”。',
+    latex: [
+      '\\text{Attention}(Q,K,V)=\\text{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}+M\\right)V',
+      'M_{ij}=\\begin{cases}0 & j\\le i\\\\ -\\infty & j>i\\end{cases}'
+    ],
+    shapes: ['[batch, Lt, d_model]', '掩码 [1, 1, Lt, Lt]', '[batch, Lt, d_model]'],
+    code: "// 下三角 0 / 其余 -1e9 的加性掩码\nconst mask = tf.where(\n  tf.greater(tf.range(0,L).reshape([1,L]),\n             tf.range(0,L).reshape([L,1])),\n  tf.fill([L,L], -1e9), tf.zeros([L,L]));\nconst masked = scores.add(mask.reshape([1,1,L,L]));",
+    params: '4·(d² + d)'
+  },
+  'dec-cross': {
+    title: '交叉注意力（Cross-Attention）',
+    desc: '解码器的 Encoder-Decoder Attention：Q 来自解码器当前层，K/V 来自编码器最终输出——源句信息的唯一入口（2014 年 Seq2Seq+Attention 思想的继承者）。',
+    latex: [
+      '\\text{head}_i=\\text{Attention}(H_{dec}W_i^Q,\\,H_{enc}W_i^K,\\,H_{enc}W_i^V)'
+    ],
+    shapes: ['Q [batch, Lt, d_model]', 'K/V [batch, Ls, d_model]', '输出 [batch, Lt, d_model]'],
+    code: "const c = crossMha.forward(hDec, encOut, encOut, null);\n// Q ← 解码器隐状态；K/V ← 编码器输出（同一线性投影族）",
+    params: '4·(d² + d)'
+  },
+  'addnorm': {
+    title: '残差连接 + 层归一化（Add & Norm）',
+    desc: '残差旁路让梯度直达底层、可堆叠深层网络；LayerNorm 稳定各层激活分布。',
+    latex: [
+      'h=\\text{LayerNorm}\\big(x+\\text{Sublayer}(x)\\big)',
+      '\\text{LN}(x)=\\gamma\\odot\\frac{x-\\mu}{\\sqrt{\\sigma^2+\\varepsilon}}+\\beta'
+    ],
+    shapes: ['[batch, seq_len, d_model]', '形状不变（逐元素）'],
+    code: "const { mean, variance } = tf.moments(x, -1, true);\nconst y = x.sub(mean)\n           .div(variance.add(1e-6).sqrt())\n           .mul(gamma).add(beta);\n// Add & Norm：ln(x.add(sublayerOut))",
+    params: '每处 2·d（γ 与 β）；每层共 2 处 → 4·d'
+  },
+  'ffn': {
+    title: '前馈网络（Feed-Forward Network）',
+    desc: '逐位置独立的两层 MLP：先扩维到 d_ff（512→2048），ReLU 后再投回 d_model。参数量的大头。',
+    latex: [
+      '\\text{FFN}(x)=\\max\\!(0,\\,xW_1+b_1)W_2+b_2'
+    ],
+    shapes: ['[batch, seq_len, d_model]', '[batch, seq_len, d_ff]', '[batch, seq_len, d_model]'],
+    code: "const h = tf.relu(x.matMul(W1).add(b1)); // [B,L,d_ff]\nconst out = h.matMul(W2).add(b2);        // [B,L,d_model]",
+    params: '2·d·d_ff + f + d'
+  },
+  'enc-stack': {
+    title: 'Encoder 完整结构（× N 层）',
+    desc: '上述子层串联为一层，堆叠 N 层（原论文 N=6）。所有位置完全并行，无循环依赖。',
+    latex: [
+      'H^{(l)}=\\text{LN}\\Big(H^{(l-1)}+\\text{FFN}\\big(\\text{LN}(H^{(l-1)}+\\text{MHA}(H^{(l-1)}))\\big)\\Big)'
+    ],
+    shapes: ['输入 [batch, seq_len, d_model]', 'N 层间形状不变', '输出 [batch, seq_len, d_model]'],
+    code: "for (let l = 0; l < numLayers; l++) {\n  const r = encLayers[l].forward(x); // MHA → Add&Norm → FFN → Add&Norm\n  x = r.output;\n}",
+    params: '每层 4·(d²+d) + 2·d·f + f + 5·d，× N 层'
+  },
+  'dec-stack': {
+    title: 'Decoder 完整结构（× N 层）',
+    desc: '每层比 Encoder 多一个交叉注意力子块；自注意力带因果掩码，保证第 t 步只依赖 < t 步。',
+    latex: [
+      'z=\\text{LN}_1(x+\\text{MaskedMHA}(x)),\\; z^{\\prime}=\\text{LN}_2\\big(z+\\text{CrossAttn}(z,\\,H_{enc})\\big)'
+    ],
+    shapes: ['目标输入 [batch, Lt, d_model]', '交叉注意力 K/V [batch, Ls, d_model]', '输出 [batch, Lt, d_model]'],
+    code: "for (const layer of decLayers) {\n  const r = layer.forward(y, encOut, causalMask(Lt));\n  y = r.output;\n}",
+    params: '每层 8·(d²+d) + 2·d·f + f + 7·d，× N 层'
+  },
+  'out': {
+    title: '输出投影 + Softmax',
+    desc: '解码器末位置隐状态投影到词表维度，softmax 得到下一个 token 的概率分布（逐词生成循环）。注意：本演示权重为随机初始化，分布仅展示机制而非语言能力。',
+    latex: [
+      'P(u\\,|\\,x)=\\text{softmax}\\big(H_L W_{out}+b\\big),\\quad W_{out}\\in\\mathbb{R}^{d\\times|V|}'
+    ],
+    shapes: ['[batch, 1, d_model]', '[batch, |V|]', '概率和为 1'],
+    code: "const last = y.slice([0, Lt-1, 0], [1, 1, dModel]);\nconst logits = last.matMul(Wout).add(bout); // [1,1,V]\nconst probs  = tf.softmax(logits, -1);",
+    params: 'd × V + V'
+  }
+};
+
+/* ---------- 详情面板渲染 ---------- */
+const DetailPanel = {
+  /**
+   * 渲染指定节点的公式/形状/代码/参数量。
+   * @param {string} nodeId 架构节点 id
+   */
+  show(nodeId){
+    const det = MODULE_DETAILS[nodeId];
+    if(!det){ console.warn('未知节点详情:', nodeId); return; }
+    const panel = document.getElementById('detail-panel');
+    let html = '<div class="dp-title"><span>' + det.title + '</span>' +
+               '<span style="font-size:12px;color:var(--c-text-dim);font-weight:400;">' +
+               (det.desc || '') + '</span></div>';
+    html += '<div class="dp-sec"><span class="dp-label">数学公式</span><div class="dp-formula">';
+    det.latex.forEach((tex, i) => {
+      html += '<div id="dp-tex-' + i + '" style="margin:6px 0;"></div>';
+    });
+    html += '</div></div>';
+    html += '<div class="dp-sec"><span class="dp-label">张量形状变化</span><div class="dp-shapes">' +
+            det.shapes.map((s, i) =>
+              (i ? '<span class="arr">→</span>' : '') +
+              '<span class="shape">' + s + '</span>').join('') +
+            '</div></div>';
+    html += '<div class="dp-sec"><span class="dp-label">核心代码（tfjs）</span>' +
+            '<pre class="dp-code">' + det.code.replace(/</g,'&lt;') + '</pre></div>';
+    html += '<div class="dp-sec"><span class="dp-label">参数数量</span>' +
+            '<span class="dp-params">' + det.params + '</span></div>';
+    panel.innerHTML = html;
+    /* KaTeX 同步渲染（defer 脚本此时应已就绪） */
+    if(typeof katex !== 'undefined'){
+      det.latex.forEach((tex, i) => {
+        try{
+          katex.render(tex, document.getElementById('dp-tex-' + i),
+                       { throwOnError:false, displayMode:true });
+        }catch(e){
+          document.getElementById('dp-tex-' + i).textContent = tex;
+        }
+      });
+    }else{
+      det.latex.forEach((tex, i) => {
+        document.getElementById('dp-tex-' + i).textContent = tex;
+      });
+    }
+  }
+};
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
