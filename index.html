@@ -450,12 +450,9 @@ function countParams(cfg, vocabSize){
     total:        vocabSize * d + L * perLayer
   };
 }
-/* 占位守卫：T3 接入真实词表后由 Vocab.length 提供词表大小 */
-const __VOCAB_PLACEHOLDER__ = 40;
-
-/** 右栏「参数量估算」摘要渲染（T3 前用占位词表大小 40） */
+/** 右栏「参数量估算」摘要渲染（词表由模块3的 Tokenizer 提供） */
 function renderParamSummary(){
-  const V = (window.Vocab && window.Vocab.length) || __VOCAB_PLACEHOLDER__;
+  const V = window.Vocab.length;
   const p = countParams(Config, V);
   document.getElementById('param-summary').innerHTML =
     '<b style="color:var(--c-primary);">参数量估算</b>' +
