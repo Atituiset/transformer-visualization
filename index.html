@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <!--
   ============================================================
-  Transformer 架构交互式可视化学习应用
+  Transformer 架构演进交互式可视化学习应用
   作者：atituiset
   日期：2026-08-24
-  版本：v1.0.0
-  说明：单文件纯前端应用。TensorFlow.js 完成前向推理模拟，
+  版本：v2.0.0
+  说明：单文件纯前端应用。六大架构视图（前史 RNN→2017 / 原版
+        Enc-Dec / Decoder-Only Dense / MoE / Attention 演进 / SSM）
+        + 1990→2025 论文线时间轴。TensorFlow.js 完成前向推理模拟，
         D3.js 绘制架构图与注意力热力图，KaTeX 渲染公式。
   ============================================================
 -->
@@ -13,7 +15,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Transformer 架构交互式可视化</title>
+<title>Transformer 架构演进交互式可视化</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231a237e"/><text x="16" y="22" font-size="16" text-anchor="middle" fill="%23ff6f00" font-family="sans-serif" font-weight="bold">T</text></svg>'>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -170,13 +172,20 @@ html[data-theme="dark"] .panel h2{color:var(--c-primary-light);}
 .subcard h3{font-size:13.5px;color:var(--c-text-dim);font-weight:600;margin-bottom:6px;}
 #pe-wave svg{display:block;}
 #heatmap-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
-#heatmap-controls .seg{display:inline-flex;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;}
-#heatmap-controls .seg button{
+.seg{display:inline-flex;border:1px solid var(--c-border);border-radius:8px;overflow:hidden;}
+.seg button{
   border:none;background:transparent;color:var(--c-text);
   font-size:13px;padding:4px 10px;cursor:pointer;font-family:var(--font-mono);
 }
-#heatmap-controls .seg button.on{background:var(--c-primary);color:#fff;}
-html[data-theme="dark"] #heatmap-controls .seg button.on{color:#0f1420;}
+.seg button.on{background:var(--c-primary);color:#fff;}
+html[data-theme="dark"] .seg button.on{color:#0f1420;}
+.arch-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+.arch-toolbar h3{margin:0;}
+#view-seg button{font-size:12.5px;padding:4px 9px;}
+#moe-demo{font-size:12.5px;padding:4px 10px;}
+.dp-refs{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px;}
+.dp-ref{font-size:11.5px;font-family:var(--font-mono);color:var(--c-text-dim);
+  border:1px dashed var(--c-border);border-radius:6px;padding:2px 7px;}
 .hm-scroll{overflow-x:auto;}
 #attn-heatmap svg{display:block;}
 .hm-tip{
@@ -289,8 +298,8 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 <body>
 
 <header id="topbar">
-  <h1>Transformer 架构交互式可视化</h1>
-  <span id="version-tag">v1.0.0</span>
+  <h1>Transformer 架构演进交互式可视化</h1>
+  <span id="version-tag">v2.0.0</span>
   <span class="spacer"></span>
   <button id="theme-toggle" class="btn" title="切换深浅主题">🌙 深色模式</button>
 </header>
@@ -299,7 +308,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
   <!-- ============ 左栏：历史时间轴 ============ -->
   <aside id="panel-timeline" class="panel">
-    <h2>历史演进</h2>
+    <h2>历史演进 <span style="font-size:12px;font-weight:400;color:var(--c-text-dim);">（点击节点联动架构图 · 1990→2025 论文线）</span></h2>
     <ol id="timeline-list"></ol>
     <div id="timeline-note"></div>
   </aside>
@@ -307,8 +316,19 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   <!-- ============ 中栏：架构解剖 ============ -->
   <section id="panel-arch">
     <div id="arch-wrap" class="subcard">
-      <h3 style="margin-bottom:4px;">模型结构 <span style="font-weight:400;font-size:12px;">（悬停查看说明 · 点击查看详情）</span></h3>
-      <svg id="arch-svg" role="img" aria-label="Transformer 编码器-解码器结构图"></svg>
+      <div class="arch-toolbar">
+        <h3>模型结构 <span style="font-weight:400;font-size:12px;">（悬停查看说明 · 点击查看详情）</span></h3>
+        <span class="seg" id="view-seg">
+          <button data-view="pre" title="1990→2017：RNN/LSTM/Seq2Seq/Attention 如何一步步演进到 Transformer">前史 RNN→2017</button>
+          <button data-view="orig" class="on" title="2017 原版 Encoder-Decoder">2017 原版</button>
+          <button data-view="dense" title="GPT → LLaMA → Qwen-Dense：现代 Decoder-Only Dense">Decoder-Only·Dense</button>
+          <button data-view="moe" title="Switch → Mixtral → DeepSeek-V3 → Qwen3 → Kimi K2">Decoder-Only·MoE</button>
+          <button data-view="attn" title="MHA→MQA→GQA→MLA；FlashAttention→NSA/MoBA→线性→混合">Attention 演进</button>
+          <button data-view="ssm" title="线性注意力与状态空间：Linear Transformer→RWKV/xLSTM→S4→Mamba→Kimi Linear">线性·SSM</button>
+        </span>
+        <button id="moe-demo" class="btn" style="display:none;">🎲 Top-2 路由演示</button>
+      </div>
+      <svg id="arch-svg" role="img" aria-label="Transformer 架构演进结构图"></svg>
       <div class="arch-tooltip" id="arch-tooltip"></div>
     </div>
 
@@ -1103,6 +1123,319 @@ const MODULE_DETAILS = {
     shapes: ['[batch, 1, d_model]', '[batch, |V|]', '概率和为 1'],
     code: "const last = y.slice([0, Lt-1, 0], [1, 1, dModel]);\nconst logits = last.matMul(Wout).add(bout); // [1,1,V]\nconst probs  = tf.softmax(logits, -1);",
     params: 'd × V + V'
+  },
+
+  /* ============ 前史（RNN → Transformer） ============ */
+  'rnn': {
+    title: '简单 RNN（Elman, 1990）',
+    desc: '最原始的序列模型：隐藏状态沿时间逐步递推，上一步的输出是下一步的输入。理论上能记住任意长的历史，实际上梯度连乘导致只能记住约 10~20 步。',
+    latex: [
+      'h_t=\\tanh(W_h h_{t-1}+W_x x_t+b),\\quad y_t=W_y h_t',
+      '\\frac{\\partial h_t}{\\partial h_0}=\\prod_{k\\le t} W_h^{\\top}\\text{diag}(\\varphi\\prime)\\ \\text{（连乘 → 消失/爆炸）}'
+    ],
+    shapes: ['[batch, seq, d] 逐步展开','t 时刻必须等 t−1 算完（无法并行）'],
+    code: "h = tf.zeros([B, d]);\nfor (const x_t of xs)          // 必须串行\n  h = tf.tanh(h.matMul(Wh).add(x_t.matMul(Wx)));",
+    params: 'd² + d·d + d',
+    refs: ['Elman 1990 · Finding Structure in Time',
+           'Rumelhart et al. 1986 · Learning representations by back-propagating errors']
+  },
+  'lstm': {
+    title: 'LSTM（1997）与 GRU（2014）',
+    desc: '给 RNN 装上「传送带」：细胞状态 cₜ 沿时间近似线性流动，三个门（输入/遗忘/输出）控制读写擦除，缓解梯度消失。GRU（2014）合并门结构、参数更少，效果相当。',
+    latex: [
+      'c_t=f_t\\odot c_{t-1}+i_t\\odot\\tilde{c}_t,\\quad h_t=o_t\\odot\\tanh(c_t)',
+      'i_t=\\sigma(W_i[h_{t-1},x_t])\\ \\text{（遗忘/输出门同理）}'
+    ],
+    shapes: ['[batch, seq, 4d]（四门拼接一次算完）','c_t / h_t [batch, d]'],
+    code: "const gates = tf.matMul(tf.concat([h, x], 1), W);  // i f o g\nconst c = f.mul(cPrev).add(i.mul(tf.tanh(g)));     // 细胞状态更新\nconst h = o.mul(tf.tanh(c));",
+    params: '4·(d·(d+e)+d)（GRU 为 3 组）',
+    refs: ['Hochreiter & Schmidhuber 1997 · Long Short-Term Memory',
+           'Cho et al. 2014 · Learning Phrase Representations (GRU)']
+  },
+  's2s': {
+    title: 'Seq2Seq（2014）',
+    desc: 'Encoder-Decoder 框架：编码器把变长源句压缩为一个固定向量 c，解码器从 c 逐步生成目标句。确立了「编码-解码」范式——但固定向量成为长句的性能瓶颈。',
+    latex: [
+      'c=\\text{Enc}(x_{1:n}),\\quad P(y)=\\prod_t P(y_t\\mid y_{<t},c)'
+    ],
+    shapes: ['源句 [n, d] → c [d]（信息瓶颈）','目标句逐步生成'],
+    code: "const c = encodeRNN(src).slice([srcLen-1]);  // 末状态 = 整句\nlet h = c;\nfor (let t = 0; t < maxLen; t++) h = decodeRNN(h, yPrev);",
+    params: '2 组 RNN 参数',
+    refs: ['Sutskever et al. 2014 · Sequence to Sequence Learning with Neural Networks']
+  },
+  'batt': {
+    title: '加性注意力（Bahdanau, 2015）',
+    desc: '打破固定向量瓶颈：解码每一步动态回看编码器全部状态，按对齐分数 α 加权求和得到上下文。注意力权重可视化即「软对齐」——2017 自注意力的直系前身（同年 Luong 提出乘性/点积版本）。',
+    latex: [
+      'e_{ti}=a(s_{t-1},h_i),\\quad \\alpha_{ti}=\\text{softmax}_i(e_{ti})',
+      'c_t=\\textstyle\\sum_i \\alpha_{ti} h_i'
+    ],
+    shapes: ['分数 [L_t, L_s] → 权重 α（行和=1）','上下文 c_t [d]'],
+    code: "const e = tf.tanh(sPrev.matMul(Wa).add(H.matMul(Ua)));\nconst alpha = tf.softmax(e.matMul(v), -1);   // 对齐权重\nconst ctx = alpha.matMul(H);                 // 加权上下文",
+    params: '对齐网络 ~3·d²',
+    refs: ['Bahdanau et al. 2015 · Neural Machine Translation by Jointly Learning to Align and Translate',
+           'Luong et al. 2015 · Effective Approaches to Attention-based Neural Machine Translation']
+  },
+  'selfattn': {
+    title: '自注意力（2017，前史的终点）',
+    desc: '关键一跃：注意力不再只是「解码器看编码器」，而是让序列自己看自己——Q、K、V 同源。任意两位置一步直连（路径 O(1)），全部位置一次矩阵乘法并行完成，循环被彻底抛弃。',
+    latex: [
+      '\\text{Attention}(X,X,X)=\\text{softmax}\\!\\left(\\frac{XX^{\\top}}{\\sqrt{d}}\\right)X'
+    ],
+    shapes: ['[batch, L, d] → [batch, L, d]（一次并行）'],
+    code: "const scores = X.matMul(X, false, true).div(Math.sqrt(d));\nreturn tf.softmax(scores, -1).matMul(X);",
+    params: '0（不含投影）',
+    refs: ['Vaswani et al. 2017 · Attention Is All You Need']
+  },
+
+  /* ============ Decoder-Only · Dense 现代组件 ============ */
+  'rope': {
+    title: 'RoPE 旋转位置编码（RoFormer, 2021）',
+    desc: '把位置编码为二维平面旋转：q、k 各自旋转 m·θ、n·θ 后做内积，结果只依赖相对位置 m−n。绝对位置的实现、相对位置的表达，且可外推；配合 YaRN/NTK 插值可扩展到百万级上下文。LLaMA/Qwen/Kimi 全系采用（ALiBi 2022 为线性偏置变体）。',
+    latex: [
+      '\\begin{pmatrix}q_m^{(2i)}\\\\ q_m^{(2i+1)}\\end{pmatrix}=\\begin{pmatrix}\\cos m\\theta_i & -\\sin m\\theta_i\\\\ \\sin m\\theta_i & \\cos m\\theta_i\\end{pmatrix}\\begin{pmatrix}q^{(2i)}\\\\ q^{(2i+1)}\\end{pmatrix}',
+      '\\langle R_m q,\\,R_n k\\rangle=\\langle q,\\,R_{n-m}k\\rangle\\ \\text{（只依赖 }m-n\\text{）}'
+    ],
+    shapes: ['[batch, seq, d_model] 成对维度旋转','形状不变、0 参数'],
+    code: "const theta = Math.pow(10000, -2*i/dModel);\nconst [x, y] = [q[2*i], q[2*i+1]];\nq[2*i]   = x*Math.cos(m*theta) - y*Math.sin(m*theta);\nq[2*i+1] = x*Math.sin(m*theta) + y*Math.cos(m*theta);",
+    params: '0（固定旋转，无可训练参数）',
+    refs: ['Su et al. 2021 · RoFormer: Enhanced Transformer with Rotary Position Embedding',
+           'Press et al. 2022 · ALiBi (Train Short, Test Long)',
+           'Peng et al. 2024 · YaRN (上下文扩展)']
+  },
+  'rmsnorm': {
+    title: 'RMSNorm（2019）+ Pre-Norm',
+    desc: 'LayerNorm 的减法：去掉均值中心化，只按均方根缩放，计算更少且效果相当；配合 Pre-Norm（先归一化再进子层）让百层网络稳定训练。GPT-2 起用 Pre-LN，LLaMA 起用 Pre-RMSNorm——2017 的 Post-LN 已成为历史。',
+    latex: [
+      '\\text{RMSNorm}(x)=\\frac{x}{\\sqrt{\\frac{1}{d}\\textstyle\\sum_i x_i^2+\\varepsilon}}\\odot g',
+      '\\text{对比 LayerNorm：无需减去均值 }\\mu(x)'
+    ],
+    shapes: ['[batch, seq, d_model] → 同形'],
+    code: "const ms = tf.mean(tf.square(x), -1, true);\nreturn x.div(ms.add(1e-6).sqrt()).mul(gamma);",
+    params: 'd（仅缩放向量 g）',
+    refs: ['Zhang & Sennrich 2019 · Root Mean Square Layer Normalization',
+           'Xiong et al. 2020 · On Layer Normalization in the Transformer Architecture (Pre-LN)']
+  },
+  'swiglu': {
+    title: 'SwiGLU 门控前馈（2020→LLaMA）',
+    desc: '现代 LLM 的 FFN：SiLU 门控分支与线性分支逐元素相乘后再投影，同等参数量下稳定优于 ReLU FFN。因多一个矩阵，d_ff 常取约 ⅔·4d 保持总参数与原设计对齐。激活函数演进线：ReLU(2017) → GELU(GPT/BERT) → SiLU/SwiGLU(LLaMA 起)。',
+    latex: [
+      '\\text{SwiGLU}(x)=\\big(\\text{SiLU}(xW_{g})\\odot xW_{u}\\big)W_{d},\\quad \\text{SiLU}(x)=x\\cdot\\sigma(x)'
+    ],
+    shapes: ['[B,L,d] → [B,L,d_ff] → [B,L,d]'],
+    code: "const gate = tf.silu(x.matMul(Wg));\nconst up   = x.matMul(Wu);\nreturn gate.mul(up).matMul(Wd);",
+    params: '3·d·d_ff',
+    refs: ['Shazeer 2020 · GLU Variants Improve Transformer',
+           'Touvron et al. 2023 · LLaMA（首次大规模采用）']
+  },
+  'gqa': {
+    title: 'GQA 分组查询注意力（2023）',
+    desc: 'Q 头分组共享 KV 头（如 32 个 Q 头共享 8 组 KV）：KV Cache 与解码带宽直接 ÷4，质量接近 MHA；还可从训练好的 MHA 检查点「Uptraining」低成本转换。MQA（2019）是 h_KV=1 的极端特例。Qwen2/3、LLaMA-2/3 的标配。',
+    latex: [
+      '\\text{head}_i=\\text{Attention}\\big(QW_i^Q,\\,KW_{g(i)}^K,\\,VW_{g(i)}^V\\big),\\quad g(i)=\\big\\lfloor i/(h_Q/h_{KV})\\big\\rfloor'
+    ],
+    shapes: ['Q [B, 32, L, dh]','K/V [B, 8, L, dh] → tile 广播','KV Cache ÷ 4'],
+    code: "const K8  = K.reshape([B,L,8,dh]).transpose([0,2,1,3]);\nconst K32 = tf.tile(K8, [1, 4, 1, 1]);   // 8 组 KV → 32 头\nconst out = sdpa(Q, K32, V32, causalMask(L));",
+    params: 'KV 投影省 (1 − h_KV/h_Q)·2·d·d',
+    refs: ['Ainslie et al. 2023 · GQA: Training Generalized Multi-Query Transformer Models',
+           'Kwon et al. 2023 · vLLM/PagedAttention（Cache 显存管理）']
+  },
+  'lm-head': {
+    title: 'LM Head 输出层',
+    desc: 'Final RMSNorm 后的隐状态经 Linear 投影到词表并 softmax，取 argmax/采样作为下一个 token。现代 LLM 常与输入 Embedding 共享权重（权重绑定），省下 V×d 参数；解码侧配合 KV Cache 逐 token 生成。',
+    latex: [
+      'P(u\\,|\\,x)=\\text{softmax}(h_L W_{out}^{\\top}),\\quad W_{out}=E^{\\top}\\ \\text{（可选绑定）}'
+    ],
+    shapes: ['[B,L,d] → [B,L,|V|] → 下一个 token'],
+    code: "const logits = h.matMul(E.transpose());  // 权重绑定\nconst next = tf.multinomial(tf.softmax(logits.slice([0,-1])), 1);",
+    params: 'd×V（绑定后 0 新增）',
+    refs: ['Press & Wolf 2017 · Using the Output Embedding to Improve Language Models']
+  },
+
+  /* ============ Attention 演进 ============ */
+  'mha-ev': {
+    title: 'MHA 多头注意力（2017 基线）',
+    desc: '每个 Q 头独立配一组 K/V 头：表达力最强，但推理时 KV Cache 随头数线性增长（2·L·h·dₕ/层），长上下文与大批量并发的瓶颈起点——后续所有变体都在回答「KV 能不能更小」。',
+    latex: ['\\text{Cache}=2\\,L\\,h\\,d_h\\ \\text{floats / 层 / 序列}'],
+    shapes: ['Q/K/V [B, h, L, dh]（h 组独立 KV）'],
+    code: "// h 组 KV 全部进 Cache\nconst K = splitHeads(x.matMul(WK));  // [B,h,L,dh]",
+    params: '4·(d²+d)',
+    refs: ['Vaswani et al. 2017 · Attention Is All You Need']
+  },
+  'mqa': {
+    title: 'MQA 多查询注意力（2019）',
+    desc: '所有 Q 头共享同一组 K/V：KV Cache 骤降 h 倍、解码吞吐大幅提升；但表达力损失明显。作为 GQA 的极端特例（h_KV=1）被记入谱系。',
+    latex: ['h_{KV}=1:\\; \\text{Cache} \\div h'],
+    shapes: ['Q [B,h,L,dh]','K/V [B,1,L,dh]（全头共享）'],
+    code: "const K1 = K.reshape([B,L,1,dh]);\nconst Kt = tf.tile(K1, [1, h, 1, 1]);",
+    params: 'KV 投影仅 2·d·dh',
+    refs: ['Shazeer 2019 · Fast Transformer Decoding: One Write-Head is All You Need']
+  },
+  'mla': {
+    title: 'MLA 多头潜在注意力（DeepSeek-V2/V3、Kimi K2）',
+    desc: '把 KV 低秩压缩进潜在向量 c（d_c ≪ d·h），推理时 Cache 只存 c，按需用吸收矩阵升维还原 K/V：显存缩小数十倍且质量不掉；配合 MoE 支撑 671B/1T 级模型的高效推理。',
+    latex: [
+      'c_{KV}=W_{DKV}x\\in\\mathbb{R}^{d_c},\\quad K=W_{UK}c_{KV},\\; V=W_{UV}c_{KV}',
+      '\\text{Cache}: 2Lhd_h \\rightarrow L d_c\\ (\\div \\text{数十倍})'
+    ],
+    shapes: ['x [B,L,d] → c_KV [B,L,d_c≈512]','按需还原 K/V [B,h,L,dh]'],
+    code: "const c = x.matMul(W_DKV);              // 唯一进 Cache 的\nconst K = c.matMul(W_UK), V = c.matMul(W_UV); // 解码侧升维",
+    params: '压缩/升维 ~2·d·d_c + 2·d_c·d',
+    refs: ['DeepSeek-AI 2024 · DeepSeek-V2 Technical Report (MLA)',
+           'DeepSeek-AI 2024 · DeepSeek-V3 Technical Report',
+           'Moonshot AI 2025 · Kimi K2（沿用 MLA）']
+  },
+  'flash': {
+    title: 'FlashAttention（2022，IO 感知的精确注意力）',
+    desc: '不改数学、只改访存：Q/K/V 分块装入 SRAM，块内在线 softmax（维护运行最大值 m 与和 ℓ），L×L 矩阵从不写回 HBM。长上下文训练提速 2-4×、显存 O(L²)→O(L)，是现代框架默认内核（v2/2023 换并行轴、v3/2024 上 FP8）。',
+    latex: [
+      'm\\leftarrow\\max(m,\\,m_{\\text{tile}}),\\quad \\ell\\leftarrow e^{m_{old}-m}\\,\\ell+\\textstyle\\sum_{\\text{tile}}e^{s-m}'
+    ],
+    shapes: ['HBM 读写：O(L²) → O(Ld)','结果与标准 softmax 完全一致'],
+    code: "for (const [Kj, Vj] of tiles(K, V)) {   // K/V 分块流入\n  const S  = Qtile.matMul(Kj.T).div(Math.sqrt(dk));\n  mNew = rowmax(m, S); l = exp(m−mNew)*l + rowsum(exp(S−mNew));\n  acc  = exp(m−mNew)*acc + exp(S−mNew).matMul(Vj); m = mNew;\n}\nconst O = acc.div(l);",
+    params: '0（内核级优化，非新参数）',
+    refs: ['Dao et al. 2022 · FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness',
+           'Dao 2023 · FlashAttention-2', 'Shah et al. 2024 · FlashAttention-3'],
+    extra: '<svg width="330" height="168" role="img" aria-label="FlashAttention 分块在线 softmax 示意" style="background:var(--c-code-bg);border-radius:8px;padding:6px;">' +
+      '<text x="14" y="18" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q×Kᵀ 分块（因果）</text>' +
+      (() => { let s=''; for(let i=0;i<4;i++)for(let j=0;j<4;j++){ const on=j<=i;
+        s+='<rect x="'+(14+j*26)+'" y="'+(26+i*22)+'" width="22" height="18" rx="3" fill="'+
+        (on?'rgba(126,166,255,.75)':'rgba(160,175,200,.18)')+'"/>'; }
+        s+='<rect x="12" y="24" width="106" height="90" rx="6" fill="none" stroke="var(--c-accent)" stroke-width="1.6" stroke-dasharray="4 3"/>';
+        return s; })() +
+      '<text x="140" y="40" font-size="12" fill="var(--c-text)" font-family="var(--font-mono)">SRAM 常驻：</text>' +
+      '<text x="140" y="58" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q 分块 + m, ℓ, O 累计器</text>' +
+      '<text x="140" y="84" font-size="12" fill="var(--c-text)" font-family="var(--font-mono)">HBM：</text>' +
+      '<text x="140" y="102" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">从不物化 L×L 矩阵</text>' +
+      '<path d="M 14 132 L 118 132" stroke="var(--c-accent)" stroke-width="1.6" marker-end="url(#arrow)"/>' +
+      '<text x="14" y="152" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">K/V 分块依次流入 → 在线 softmax 修正</text>' +
+      '</svg>'
+  },
+  'sparse': {
+    title: '可训练稀疏注意力（NSA / MoBA, 2025）',
+    desc: '注意力矩阵大部分是低值噪声：只对重要块算精确注意力，其余跳过或压缩。DeepSeek NSA 把稀疏模式做进预训练（硬件对齐的块稀疏核）；Kimi MoBA 以「块级 Top-K 门控」混合全/稀疏注意力，长上下文成本近线性。',
+    latex: [
+      'O=\\text{Attn}(Q,\\,\\text{TopK-blocks}(K,V)),\\quad g=\\text{softmax}(\\text{gate})'
+    ],
+    shapes: ['L×L → 每行只保留 ~k 个块','复杂度 ~O(L·k·w)'],
+    code: "// MoBA：块级门控选 Top-K 块\nconst blockScores = qBlock.matMul(kBlocks.T);\nconst topK = tf.topk(blockScores, k);  // 其余块不计算",
+    params: '0~少量门控参数',
+    refs: ['DeepSeek-AI 2025 · Native Sparse Attention (NSA)',
+           'Moonshot AI 2025 · MoBA: Mixture of Block Attention for Long-Context LLMs']
+  },
+  'hybrid': {
+    title: '混合架构（少数全注意力 + 多数线性层）',
+    desc: '全注意力负责精确检索、线性层负责廉价序列建模，按比例（常 1:3 ~ 1:7）混搭：Jamba（AI21，Mamba+Attention）、Griffin/Hawk（DeepMind，门控线性递归）、Samba（Microsoft）、Kimi Linear（KDA+MLA）——长上下文效率与质量的新平衡点。',
+    latex: ['\\text{层序列}=[\\underbrace{\\text{Linear}}_{3/4},\\dots,\\underbrace{\\text{Full}}_{1/4}]\\times N'],
+    shapes: ['同 Decoder Block，逐层替换注意力类型'],
+    code: "for (l of layers) x = l.isFull ? fullAttn(x) : linearAttn(x);",
+    params: '介于 Dense 与 Linear 之间',
+    refs: ['Lieber et al. 2024 · Jamba: A Hybrid Transformer-Mamba Language Model',
+           'De et al. 2024 · Griffin: Mixing Gated Linear Recurrences with Local Attention',
+           'Moonshot AI 2025 · Kimi Linear']
+  },
+
+  /* ============ 线性 / SSM / RNN 复兴 ============ */
+  'linear': {
+    title: '线性注意力（Katharopoulos, 2020）',
+    desc: '用核函数 φ 改写 softmax 注意力并利用结合律：先算 φ(K)ᵀV（一个 d×d 矩阵），复杂度 O(L·d²) 摆脱 L²；同一公式可改写为状态递推 Sₜ=Sₜ₋₁+φ(kₜ)vₜᵀ——「Transformer 就是 RNN」。后续 RWKV/xLSTM/KDA 都在这条线上做门控与衰减改进。',
+    latex: [
+      '\\text{Attn}(Q,K,V)=\\frac{\\phi(Q)\\big(\\phi(K)^{\\top}V\\big)}{\\phi(Q)\\phi(K)^{\\top}\\mathbf{1}}',
+      'S_t=S_{t-1}+\\phi(k_t)v_t^{\\top},\\quad u_t=\\frac{S_t\\phi(q_t)}{\\phi(q_t)^{\\top}z_t}'
+    ],
+    shapes: ['φ(K)ᵀV：[d,d] 常量状态','每步 O(d²)，与 L 无关'],
+    code: "const KV = phi(K).transpose().matMul(V);  // [d,d] 先算这个\nconst out = phi(Q).matMul(KV);\n// 流式推理：S = S.add(phi(k_t).outer(v_t));",
+    params: '0（φ 固定特征映射）',
+    refs: ['Katharopoulos et al. 2020 · Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention']
+  },
+  'rwkv': {
+    title: 'RWKV（2022）',
+    desc: '把注意力改写为带通道级时间衰减的线性 RNN：训练时可并行（类 Transformer），推理时 O(1) 状态（类 RNN）。开源社区长青的线性模型线。',
+    latex: [
+      'wkv_t=\\frac{\\sum_i e^{-(t-1-i)w+k_i}v_i+e^{u+k_t}v_t}{\\sum_i e^{-(t-1-i)w+k_i}+e^{u+k_t}}'
+    ],
+    shapes: ['每通道标量衰减 w','状态 [d] 级别'],
+    code: "// 通道级衰减递推（数值稳定版省略）\na = a.mul(wDecay).add(v_t); b = b.mul(wDecay).add(1);",
+    params: '~同 Transformer Block',
+    refs: ['Peng et al. 2023 · RWKV: Reinventing RNNs for the Transformer Era']
+  },
+  'xlstm': {
+    title: 'xLSTM（2024，LSTM 复兴）',
+    desc: 'LSTM 原作者团队 27 年后的回应：sLSTM 用指数门控+新记忆混合，mLSTM 用矩阵记忆 + 协方差更新（可并行）。与 Mamba/RWKV 同属「RNN 复兴」浪潮。',
+    latex: ['c_t=f_t\\odot c_{t-1}+i_t\\,v_t,\\quad C_t=C_{t-1}\\odot f_t+n_t v_t^{\\top}\\ \\text{(mLSTM 矩阵记忆)}'],
+    shapes: ['记忆由向量 [d] 扩展为矩阵 [d,d]'],
+    code: "C = C.mul(f).add(n.outer(v));  // 矩阵细胞状态\nh = C.matMul(q).div(norm);",
+    params: '~1.5× LSTM',
+    refs: ['Beck et al. 2024 · xLSTM: Extended Long Short-Term Memory']
+  },
+  's4': {
+    title: 'S4 结构化状态空间（2021）',
+    desc: '连续状态空间系统经 HiPPO 初始化 + 结构化对角化，可化为长卷积并行训练、递推推理：LRA 长序列基准横扫，是 Mamba 的直接前身。',
+    latex: [
+      "h'(t)=\\bar{A}h(t)+\\bar{B}x(t),\\quad y=\\bar{C}h(t)\\ \\text{（离散化 SSM）}"
+    ],
+    shapes: ['核 K = CĀᵏB̄：长度 L 的卷积核'],
+    code: "const K = ssmConvKernel(A, B, C, L);  // 长卷积形式\nconst y = conv1d(x, K);               // 训练并行\n// 推理：h = A.mul(h).add(B.mul(x));",
+    params: 'A/B/C 结构化参数 ~O(d·N)',
+    refs: ['Gu et al. 2021 · Efficiently Modeling Long Sequences with Structured State Spaces (S4)']
+  },
+  'mamba': {
+    title: 'Mamba 选择性 SSM（2023）',
+    desc: '让 SSM 的 Δ/B/C 依赖输入（选择机制）：模型可以按内容遗忘或记住信息，弥补 SSM「一视同仁」的缺陷；配合硬件感知并行扫描，训练快 5×、推理 O(1) 状态。Mamba-2（2024）证明其与线性注意力的 SSD 统一框架。',
+    latex: [
+      'h_t=\\bar{A}(x_t)h_{t-1}+\\bar{B}(x_t)x_t,\\quad y_t=\\bar{C}(x_t)h_t\\ \\text{（参数随输入变化）}'
+    ],
+    shapes: ['状态 [B,d,N]','扫描 O(L·d·N)'],
+    code: "for (const x_t of xs) {            // 硬件感知扫描（并行前缀和）\n  h = Abar(x_t).mul(h).add(Bbar(x_t).mul(x_t));\n  y_t = Cbar(x_t).dot(h);\n}",
+    params: 'Δ/B/C 投影 ~3·d·d',
+    refs: ['Gu & Dao 2023 · Mamba: Linear-Time Sequence Modeling with Selective State Spaces',
+           'Dao & Gu 2024 · Transformers are SSMs (Mamba-2/SSD)']
+  },
+  'kda': {
+    title: 'Kimi Linear · KDA（2025）',
+    desc: 'Moonshot 的混合线性架构：KDA（Kimi Delta Attention，带门控增量记忆的线性注意力，可精细遗忘）占 3/4 层，MLA 全注意力占 1/4 层。3B/48B-A3B 规模上全面对标同尺寸全注意力模型：百万级上下文、显存省 ~75%、解码吞吐 ~6×。',
+    latex: [
+      'S_t=\\alpha_t\\odot S_{t-1}+\\beta_t\\,\\phi(k_t)v_t^{\\top}\\ \\text{（门控增量规则）}'
+    ],
+    shapes: ['状态 [d,d] 矩阵记忆','层配比 Linear : Full = 3 : 1'],
+    code: "for (l of layers)\n  x = (l % 4 === 0) ? mlaBlock(x) : kdaBlock(x);  // 1/4 全注意力",
+    params: '~同 Dense Block（线性层更省 KV）',
+    refs: ['Moonshot AI 2025 · Kimi Linear: An Expressive, Efficient Attention Architecture']
+  },
+
+  /* ============ MoE ============ */
+  'moe-router': {
+    title: 'MoE 门控路由（Router / Gate）',
+    desc: '每个 token 由路由器打分，仅 Top-K（常 K=8）专家被激活：总参数与单 token 计算解耦。谱系：GShard(2020) → Switch(2021, Top-1) → Mixtral(2023, Top-2) → DeepSeek-V3(256 选 8 + 无辅助损失均衡 + 共享专家) → Qwen3(128 选 8) → Kimi K2(384 选 8)。',
+    latex: [
+      'g=\\text{softmax}\\big(\\text{TopK}(xW_g,\\,K)\\big),\\quad y=\\sum_{i\\in\\text{TopK}} g_i\\,E_i(x)',
+      '\\text{DeepSeek-V3：偏置动态调节替代辅助损失（}\\mathcal{L}_{aux}\\text{-free 均衡）}'
+    ],
+    shapes: ['x [B,L,d] → logits [B,L,E]','Top-K 掩码 → 仅 K/E 专家计算'],
+    code: "const logits = x.matMul(Wg);                 // [B,L,E]\nconst {values, indices} = tf.topk(logits, K);\nconst gate = tf.softmax(values, -1);          // 稀疏门控\nlet y = tf.zerosLike(x);\nfor (let k = 0; k < K; k++)\n  y = y.add(experts[indices[k]](x).mul(gate.slice(k)));",
+    params: 'd×E + E（路由矩阵）',
+    refs: ['Shazeer et al. 2017 · Outrageously Large Neural Networks (Sparsely-Gated MoE)',
+           'Lepikhin et al. 2020 · GShard', 'Fedus et al. 2021 · Switch Transformers',
+           'DeepSeek-AI 2024 · Auxiliary-Loss-Free Load Balancing']
+  },
+  'moe-expert': {
+    title: 'MoE 专家（Expert = SwiGLU FFN）',
+    desc: '每个专家就是一个 SwiGLU FFN。细粒度专家（更多更小的专家）+ 共享专家（常驻处理通用知识，DeepSeek/Qwen3 采用）是当前主流配置；K2 进一步用 MLA 注意力 + 384 专家做到 1T 总参 / 32B 激活。',
+    latex: ['E_i(x)=\\text{SwiGLU}_i(x),\\quad \\text{激活参数} \\approx K/E'],
+    shapes: ['[B,L,d] → [B,L,d_ff] → [B,L,d]（仅被路由 token）'],
+    code: "class Expert {  // = SwiGLU FFN\n  forward(x){ return tf.silu(x.matMul(Wg)).mul(x.matMul(Wu)).matMul(Wd); }\n}",
+    params: '每专家 3·d·d_ff（总参数 ×E，激活 ×K/E）',
+    refs: ['Jiang et al. 2024 · Mixtral of Experts',
+           'Moonshot AI 2025 · Kimi K2: Open Agentic Intelligence']
+  },
+  'moe-sum': {
+    title: '稀疏加权合成',
+    desc: '只有被选中的 K 个专家输出参与合成，其余专家本次完全不计算——这就是「万亿总参、百亿激活」的稀疏本质。推理时专家可分布到不同显卡（专家并行 EP）。',
+    latex: ['y=\\sum_{i\\in\\text{TopK}} g_i E_i(x)'],
+    shapes: ['[B,L,d]（与 Dense FFN 输出同形，直接残差）'],
+    code: "y = g1*E1(x) + g2*E2(x);  // 其余 E-2 个专家跳过",
+    params: '0',
+    refs: ['Fedus et al. 2022 · A Review of Sparse Expert Models in Deep Learning']
   }
 };
 
@@ -1133,6 +1466,12 @@ const DetailPanel = {
             '<pre class="dp-code">' + det.code.replace(/</g,'&lt;') + '</pre></div>';
     html += '<div class="dp-sec"><span class="dp-label">参数数量</span>' +
             '<span class="dp-params">' + det.params + '</span></div>';
+    if(det.extra)
+      html += '<div class="dp-sec"><span class="dp-label">机制图示</span>' + det.extra + '</div>';
+    if(det.refs && det.refs.length)
+      html += '<div class="dp-sec"><span class="dp-label">论文线</span><div class="dp-refs">' +
+              det.refs.map(r => '<span class="dp-ref">📄 ' + r + '</span>').join('') +
+              '</div></div>';
     panel.innerHTML = html;
     /* KaTeX 同步渲染（defer 脚本此时应已就绪） */
     if(typeof katex !== 'undefined'){
@@ -1228,11 +1567,246 @@ const ARCH_RESIDUALS = [
   'M 654 451 C 700 451, 700 509, 654 509'    /* dec-ffn → dec-an3 */
 ];
 
+/* ============================================================
+   模块8b：架构演进视图注册表（前史 / Dense / MoE / Attention / SSM）
+   每个视图 = 列标题 + 节点 + 连线 + 残差 + 外框（均可选 nodeW）
+   ============================================================ */
+
+/* ---- 视图：前史（1990 → 2017，如何一步步走到 Transformer） ---- */
+const ARCH_VIEW_PRE = {
+  colTitles: [
+    { x:330, y:92,  text:'① 循环时代：状态逐步传递，长程依赖路径 O(t)' },
+    { x:556, y:312, text:'② 注意力革命：任意位置直连，路径 O(1)' }
+  ],
+  nodes: [
+    { id:'rnn', x:24, y:120, label:'简单 RNN (1990)', sub:'hₜ = φ(W·hₜ₋₁ + U·xₜ)', detail:'rnn',
+      tip:'一切序列建模的起点：隐藏状态沿时间递推' },
+    { id:'lstm', x:282, y:120, label:'LSTM (1997) / GRU (2014)', sub:'门控记忆，缓解梯度消失', detail:'lstm',
+      tip:'输入/遗忘/输出门控细胞状态；GRU 是其简化版' },
+    { id:'s2s', x:540, y:120, label:'Seq2Seq (2014)', sub:'Encoder-Decoder + 固定向量瓶颈', detail:'s2s',
+      tip:'机器翻译范式确立，但整句压进一个定长向量' },
+    { id:'batt', x:282, y:340, label:'加性注意力 (2015)', sub:'解码器逐步「回看」全部编码状态', detail:'batt',
+      tip:'Bahdanau 注意力：对齐权重 αₜᵢ 动态加权编码状态（同年 Luong 提出乘性版本）' },
+    { id:'selfattn', x:540, y:340, label:'自注意力 (2017)', sub:'Q·K·V 全并行 → 见「2017 原版」', detail:'selfattn',
+      tip:'注意力从「解码器看编码器」推广为「序列看自身」，取代循环' }
+  ],
+  frames: [],
+  edges: [],
+  special: [
+    { d:'M 220 141 L 282 141' },                                  /* rnn → lstm */
+    { d:'M 478 141 L 540 141' },                                  /* lstm → s2s */
+    { d:'M 638 162 C 638 268, 380 268, 380 338' },                /* s2s → batt */
+    { d:'M 478 361 L 540 361' }                                   /* batt → selfattn */
+  ],
+  residuals: []
+};
+
+/* ---- 视图：Decoder-Only · Dense（GPT → LLaMA → Qwen-Dense） ---- */
+const ARCH_VIEW_DENSE = {
+  colTitles: [
+    { x:380, y:26, text:'Decoder-Only · Dense（GPT → LLaMA → Qwen-Dense）' }
+  ],
+  nodes: [
+    { id:'tok', x:282, y:36, label:'输入 Tokens', sub:'分词 → 词表索引', detail:'input',
+      tip:'BPE 分词后的 token 索引序列' },
+    { id:'emb', x:282, y:92, label:'Embedding', sub:'查表后 × √d_model', detail:'embed',
+      tip:'词向量查表并放大（LLaMA 起不再乘 √d）' },
+    { id:'rope', x:282, y:148, label:'+ RoPE', sub:'旋转位置编码（绝对位置·相对表达）', detail:'rope',
+      tip:'把位置编码为二维旋转，内积只依赖相对位置；ALiBi/YaRN 等为变体' },
+    { id:'rms1', x:282, y:218, label:'RMSNorm', sub:'Pre-Norm（先归一化再子层）', detail:'rmsnorm',
+      tip:'Pre-LN/RMSNorm 让深层网络训练稳定，取代 2017 的 Post-LN' },
+    { id:'gqa', x:282, y:276, label:'GQA 掩码自注意力', sub:'因果掩码 · KV 头分组共享', detail:'gqa',
+      tip:'Qwen/LLaMA-2+ 的标配：KV 头少于 Q 头，Cache 直接缩小' },
+    { id:'res1', x:282, y:334, label:'⊕ 残差', detail:'addnorm', tip:'残差直连，梯度高速通道' },
+    { id:'rms2', x:282, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'第二个 Pre-Norm' },
+    { id:'swiglu', x:282, y:450, label:'SwiGLU FFN', sub:'门控：d → d_ff → d', detail:'swiglu',
+      tip:'SiLU 门控分支 ⊙ 线性分支，取代 ReLU FFN' },
+    { id:'res2', x:282, y:508, label:'⊕ 残差', detail:'addnorm', tip:'第二处残差' },
+    { id:'lnf', x:282, y:580, label:'Final RMSNorm', detail:'rmsnorm', tip:'输出前的最后一次归一化' },
+    { id:'head', x:282, y:638, label:'LM Head · Softmax(|V|)', sub:'常与 Embedding 权重共享', detail:'lm-head',
+      tip:'隐状态 → 全词表分布，逐 token 自回归' }
+  ],
+  frames: [
+    { x:264, y:196, w:232, h:376, label:'Decoder Block × N（Pre-Norm）' }
+  ],
+  edges: [
+    ['tok','emb'], ['emb','rope'], ['rope','rms1'], ['rms1','gqa'], ['gqa','res1'],
+    ['res1','rms2'], ['rms2','swiglu'], ['swiglu','res2'], ['res2','lnf'], ['lnf','head']
+  ],
+  special: [],
+  residuals: [
+    'M 478 190 C 540 190, 540 355, 478 355',   /* rope → res1 */
+    'M 478 355 C 540 355, 540 529, 478 529'    /* res1 → res2 */
+  ]
+};
+
+/* ---- 视图：Decoder-Only · MoE（Switch → Mixtral → DeepSeek → Qwen3 → K2） ---- */
+const ARCH_VIEW_MOE = {
+  colTitles: [
+    { x:330, y:26, text:'Decoder-Only · MoE（Switch → Mixtral → DeepSeek-V3 → Qwen3 → K2）' }
+  ],
+  nodes: [
+    { id:'tok', x:232, y:36, label:'输入 Tokens', sub:'分词 → 词表索引', detail:'input', tip:'同 Dense 视图' },
+    { id:'emb', x:232, y:92, label:'Embedding', detail:'embed', tip:'词向量查表' },
+    { id:'rope', x:232, y:148, label:'+ RoPE', detail:'rope', tip:'旋转位置编码' },
+    { id:'rms1', x:232, y:218, label:'RMSNorm', sub:'Pre-Norm', detail:'rmsnorm', tip:'Pre-Norm 归一化' },
+    { id:'gqa', x:232, y:276, label:'GQA 掩码自注意力', detail:'gqa', tip:'KV 分组共享的因果自注意力' },
+    { id:'an1', x:232, y:334, label:'Add & Norm', detail:'addnorm', tip:'注意力残差 + 归一化' },
+    { id:'rms2', x:232, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'MoE 子层的 Pre-Norm' },
+    { id:'router', x:232, y:450, label:'MoE Router 门控', sub:'softmax → Top-K 稀疏激活', detail:'moe-router',
+      tip:'每个 token 只选 K 个专家：参数规模与计算量解耦' },
+    { id:'wsum', x:232, y:508, label:'稀疏加权合成', sub:'y = Σ gᵢ · Expertᵢ(x)', detail:'moe-sum',
+      tip:'仅被选中的专家输出参与合成' },
+    { id:'an2', x:232, y:566, label:'Add & Norm', detail:'addnorm', tip:'MoE 残差 + 归一化' },
+    { id:'lnf', x:232, y:624, label:'Final RMSNorm + LM Head', sub:'Linear → Softmax(|V|)', detail:'lm-head',
+      tip:'输出层（DeepSeek-V3 的 MTP 头略）' },
+    { id:'exp1', x:532, y:406, label:'专家 1 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
+    { id:'exp2', x:532, y:454, label:'专家 2 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
+    { id:'exp3', x:532, y:502, label:'专家 3 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
+    { id:'exp4', x:532, y:550, label:'专家 E · SwiGLU', sub:'（示意 4 个，实际 64~384 个）', detail:'moe-expert',
+      tip:'Qwen3: 128 选 8 · K2: 384 选 8 · DeepSeek-V3: 256 选 8 + 1 共享' }
+  ],
+  frames: [
+    { x:214, y:196, w:232, h:394, label:'Decoder Block × N' },
+    { x:514, y:388, w:232, h:204, label:'Experts × E · Top-K 激活' }
+  ],
+  edges: [
+    ['tok','emb'], ['emb','rope'], ['rope','rms1'], ['rms1','gqa'], ['gqa','an1'],
+    ['an1','rms2'], ['rms2','router'], ['router','wsum'], ['wsum','an2'], ['an2','lnf']
+  ],
+  special: [
+    { d:'M 428 462 C 486 462, 486 427, 532 427' },
+    { d:'M 428 468 C 486 468, 486 475, 532 475' },
+    { d:'M 428 474 C 486 474, 486 523, 532 523' },
+    { d:'M 428 480 C 486 480, 486 571, 532 571' },
+    { d:'M 532 427 C 474 427, 474 520, 428 520' },
+    { d:'M 532 475 C 474 475, 474 526, 428 526' },
+    { d:'M 532 523 C 474 523, 474 532, 428 532' },
+    { d:'M 532 571 C 474 571, 474 538, 428 538' }
+  ],
+  residuals: [
+    'M 478 190 C 520 190, 520 355, 478 355',   /* rope → an1 */
+    'M 478 355 C 520 355, 520 587, 478 587'    /* an1 → an2 */
+  ]
+};
+
+/* ---- 视图：Attention 演进（KV 压缩线 + 计算效率线） ---- */
+const ARCH_VIEW_ATTN = {
+  nodeW: 160,
+  colTitles: [
+    { x:370, y:90,  text:'路线 A · KV Cache 压缩（推理显存/带宽）' },
+    { x:370, y:300, text:'路线 B · 计算与访存效率（长上下文）' }
+  ],
+  nodes: [
+    { id:'mha-ev', x:20, y:120, label:'MHA 多头注意力', sub:'2017 · h 组独立 KV', detail:'mha-ev',
+      tip:'基线：KV Cache = 2·L·h·dₕ' },
+    { id:'mqa', x:200, y:120, label:'MQA 多查询', sub:'2019 · 全头共享 1 组 KV', detail:'mqa',
+      tip:'Shazeer：One Write-Head is All You Need' },
+    { id:'gqa', x:380, y:120, label:'GQA 分组查询', sub:'2023 · 分组共享（Qwen 系）', detail:'gqa',
+      tip:'MQA 与 MHA 的折中，Uptraining 转换；LLaMA-2/3、Qwen 标配' },
+    { id:'mla', x:560, y:120, label:'MLA 潜在注意力', sub:'2024 · 低秩压缩（DeepSeek）', detail:'mla',
+      tip:'Cache 只存潜在向量 c，按需升维还原 K/V；K2 沿用' },
+    { id:'flash', x:20, y:330, label:'FlashAttention', sub:'2022 · 分块在线 softmax', detail:'flash',
+      tip:'IO 感知内核：数学不变，显存 O(L²)→O(L)；v2/v3 持续进化' },
+    { id:'sparse', x:200, y:330, label:'稀疏注意力', sub:'2025 · NSA / MoBA', detail:'sparse',
+      tip:'只算重要块且稀疏模式可训练：DeepSeek NSA、Kimi MoBA' },
+    { id:'linear', x:380, y:330, label:'线性注意力', sub:'2020→25 · 核化 O(Ld²)', detail:'linear',
+      tip:'φ(Q)(φ(K)ᵀV)：与序列长度线性，见「线性·SSM」视图' },
+    { id:'hybrid', x:560, y:330, label:'混合架构', sub:'Jamba · Griffin · KDA', detail:'hybrid',
+      tip:'少数全注意力层 + 多数线性层按比例混搭（Kimi Linear 等）' }
+  ],
+  frames: [],
+  edges: [],
+  special: [
+    { d:'M 180 141 L 200 141' },
+    { d:'M 360 141 L 380 141' },
+    { d:'M 540 141 L 560 141' },
+    { d:'M 100 162 C 100 290, 60 290, 62 328' },   /* mha-ev ↓ flash */
+    { d:'M 180 351 L 200 351' },                   /* flash → sparse */
+    { d:'M 360 351 L 380 351' },                   /* sparse → linear */
+    { d:'M 540 351 L 560 351' }                    /* linear → hybrid */
+  ],
+  residuals: []
+};
+
+/* ---- 视图：线性 / SSM / RNN 复兴 ---- */
+const ARCH_VIEW_SSM = {
+  colTitles: [
+    { x:178, y:60, text:'支线 1 · 核化线性注意力' },
+    { x:556, y:60, text:'支线 2 · 结构化状态空间（SSM）' }
+  ],
+  nodes: [
+    { id:'lin', x:80, y:100, label:'线性 Transformer (2020)', sub:'Transformers are RNNs', detail:'linear',
+      tip:'φ 核化 + 结合律，摆脱 L²' },
+    { id:'rwkv', x:80, y:210, label:'RWKV (2022)', sub:'通道级衰减 · 可并行可递推', detail:'rwkv',
+      tip:'把注意力改写为带衰减的 RNN' },
+    { id:'xlstm', x:80, y:320, label:'xLSTM (2024)', sub:'指数记忆 + 矩阵状态', detail:'xlstm',
+      tip:'LSTM 原作者的复兴之作' },
+    { id:'s4', x:458, y:100, label:'S4 (2021)', sub:'HiPPO + 结构化 SSM', detail:'s4',
+      tip:'连续状态空间 + 核化卷积' },
+    { id:'mamba', x:458, y:210, label:'Mamba (2023)', sub:'选择机制 · 硬件感知扫描', detail:'mamba',
+      tip:'让 SSM 参数依赖输入 → 可内容筛选；Mamba-2 (2024) 与注意力统一' },
+    { id:'kda', x:269, y:440, label:'Kimi Linear · KDA (2025)', sub:'门控增量记忆 3/4 层 + MLA 1/4 层', detail:'kda',
+      tip:'Kimi 的混合线性架构：百万级上下文、显存与吞吐双优' }
+  ],
+  frames: [],
+  edges: [
+    ['lin','rwkv'], ['rwkv','xlstm'], ['s4','mamba']
+  ],
+  special: [
+    { d:'M 178 362 C 178 410, 300 410, 330 438' },   /* xlstm → kda */
+    { d:'M 556 252 C 556 380, 434 380, 404 438' }    /* mamba → kda */
+  ],
+  residuals: []
+};
+
+/** 视图注册表：id → 布局（orig 复用模块8 的常量） */
+const ARCH_VIEWS = {
+  pre:   ARCH_VIEW_PRE,
+  orig:  { colTitles:[{x:178,y:26,text:'Encoder'},{x:556,y:26,text:'Decoder'}],
+           frames:ARCH_FRAMES, nodes:ARCH_NODES, edges:ARCH_EDGES,
+           special:ARCH_SPECIAL_EDGES, residuals:ARCH_RESIDUALS },
+  dense: ARCH_VIEW_DENSE,
+  moe:   ARCH_VIEW_MOE,
+  attn:  ARCH_VIEW_ATTN,
+  ssm:   ARCH_VIEW_SSM
+};
+
 const ArchitectureRenderer = {
   /** @type {d3.Selection|null} */
   svg: null,
-  /** 初始化：绘制箭头 marker 与整图 */
+  /** 当前架构视图 id（见 ARCH_VIEWS） */
+  view: 'orig',
+
+  /** 初始化：绘制默认视图（2017 原版） */
   init(){
+    this._render('orig', true);
+  },
+
+  /**
+   * 切换架构视图：重绘整图并重置运行状态（演示引擎绑定 2017 前向）。
+   * @param {string} id ARCH_VIEWS 键
+   */
+  setView(id){
+    if(!ARCH_VIEWS[id] || id === this.view) return;
+    this._render(id, false);
+  },
+
+  /**
+   * 渲染指定视图。silent=true 用于初始化（不触碰尚未定义的模块）。
+   * @param {string} id 视图 id
+   * @param {boolean} silent
+   * @private
+   */
+  _render(id, silent){
+    const v = ARCH_VIEWS[id];
+    if(!v) return;
+    this.view = id;
+    const nw = v.nodeW || ARCH_LAYOUT.nodeW;
+    document.querySelectorAll('#view-seg button').forEach(b =>
+      b.classList.toggle('on', b.dataset.view === id));
+    document.getElementById('moe-demo').style.display = id === 'moe' ? '' : 'none';
+
     this.svg = d3.select('#arch-svg')
       .attr('viewBox', '0 0 ' + ARCH_LAYOUT.W + ' ' + ARCH_LAYOUT.H);
     this.svg.selectAll('*').remove();
@@ -1243,18 +1817,26 @@ const ArchitectureRenderer = {
       .attr('orient','auto-start-reverse')
       .append('path').attr('d','M 0 0 L 10 5 L 0 10 z')
       .attr('fill','var(--c-text-dim)');
-    /* 列标题 */
-    this.svg.append('text').attr('class','col-title')
-      .attr('x',178).attr('y',26).attr('text-anchor','middle').text('Encoder');
-    this.svg.append('text').attr('class','col-title')
-      .attr('x',556).attr('y',26).attr('text-anchor','middle').text('Decoder');
-    this._drawFrames();
-    this._drawEdges();
-    this._drawNodes();
+    (v.colTitles || []).forEach(t => {
+      this.svg.append('text').attr('class','col-title')
+        .attr('x',t.x).attr('y',t.y).attr('text-anchor','middle').text(t.text);
+    });
+    this._drawFrames(v.frames || []);
+    this._drawEdges(v, nw);
+    this._drawNodes(v, nw);
+    this.clearHighlight();
+
+    if(!silent){
+      DecoderDemo.running = false;
+      MoERouterDemo.running = false;
+      DataFlowAnimator.stop();
+      App.resetRunState();
+    }
   },
-  _drawFrames(){
+
+  _drawFrames(frames){
     const g = this.svg.append('g');
-    ARCH_FRAMES.forEach(f => {
+    frames.forEach(f => {
       g.append('rect').attr('class','frame-rect')
        .attr('x',f.x).attr('y',f.y).attr('width',f.w).attr('height',f.h)
        .attr('rx',14)
@@ -1266,44 +1848,35 @@ const ArchitectureRenderer = {
        .style('font-family','var(--font-mono)').text(f.label);
     });
   },
-  _drawEdges(){
+  _drawEdges(v, nw){
     const g = this.svg.append('g');
-    const byId = Object.fromEntries(ARCH_NODES.map(n => [n.id, n]));
-    ARCH_EDGES.forEach(([a, b]) => {
+    const byId = Object.fromEntries(v.nodes.map(n => [n.id, n]));
+    (v.edges || []).forEach(([a, b]) => {
       const na = byId[a], nb = byId[b];
       g.append('line').attr('class','edge')
-       .attr('x1', na.x + ARCH_LAYOUT.nodeW/2).attr('y1', na.y + ARCH_LAYOUT.nodeH)
-       .attr('x2', nb.x + ARCH_LAYOUT.nodeW/2).attr('y2', nb.y - 2);
+       .attr('x1', na.x + nw/2).attr('y1', na.y + ARCH_LAYOUT.nodeH)
+       .attr('x2', nb.x + nw/2).attr('y2', nb.y - 2);
     });
-    ARCH_SPECIAL_EDGES.forEach(e => {
-      g.append('path').attr('class','edge').attr('d', e.d);
-      if(e.label){
-        g.append('text').attr('x',e.lx).attr('y',e.ly)
-         .attr('text-anchor','middle').attr('font-size',11.5)
-         .attr('fill','var(--c-text-dim)')
-         .style('font-family','var(--font-mono)').text(e.label);
-      }
-    });
-    ARCH_RESIDUALS.forEach(d =>
+    (v.special || []).forEach(e => g.append('path').attr('class','edge').attr('d', e.d));
+    (v.residuals || []).forEach(d =>
       g.append('path').attr('class','edge residual').attr('d', d));
   },
-  _drawNodes(){
-    const self = this;
+  _drawNodes(v, nw){
     const tip = document.getElementById('arch-tooltip');
     const wrap = document.getElementById('arch-wrap');
-    const g = this.svg.append('g').selectAll('g.node').data(ARCH_NODES)
+    const g = this.svg.append('g').selectAll('g.node').data(v.nodes)
       .join('g').attr('class','node')
       .attr('transform', n => 'translate(' + n.x + ',' + n.y + ')');
     g.append('rect')
-      .attr('width', ARCH_LAYOUT.nodeW).attr('height', ARCH_LAYOUT.nodeH)
+      .attr('width', nw).attr('height', ARCH_LAYOUT.nodeH)
       .attr('rx', 9);
     g.append('text')
-      .attr('x', ARCH_LAYOUT.nodeW/2).attr('y', n => n.sub ? 18 : 26)
+      .attr('x', nw/2).attr('y', n => n.sub ? 18 : 26)
       .attr('text-anchor','middle')
       .text(n => n.label);
     g.filter(n => n.sub).append('text')
       .attr('class','sub')
-      .attr('x', ARCH_LAYOUT.nodeW/2).attr('y', 33)
+      .attr('x', nw/2).attr('y', 33)
       .attr('text-anchor','middle')
       .text(n => n.sub);
     /* 事件：点击选中 → 详情面板；悬停 → tooltip */
@@ -1339,40 +1912,142 @@ document.getElementById('arch-svg').addEventListener('click', () =>
   ArchitectureRenderer.clearHighlight());
 
 /* ============================================================
-   模块9：历史演进时间轴（spec §1，2000 → 2020 六节点）
+   模块9：历史演进时间轴（完整论文线：1990 → 2025，26 节点）
+   每条目 view 指定联动架构视图；highlights 为该视图内高亮节点
    ============================================================ */
 const HISTORY = [
-  { year:2000, name:'RNN / LSTM',
+  /* ---- 前史：循环时代 ---- */
+  { year:1990, view:'pre', name:'简单 RNN',
+    paper:'Finding Structure in Time (Elman)',
+    contrib:'一切序列建模的起点：隐藏状态沿时间递推',
+    highlights:['rnn'],
+    note:'最原始的架构：t 时刻必须等 t−1 算完，梯度连乘导致只能记住约 10~20 步——并行与长程依赖是贯穿 30 年的两道坎。' },
+  { year:1997, view:'pre', name:'LSTM',
     paper:'Long Short-Term Memory (Hochreiter & Schmidhuber)',
     contrib:'门控记忆单元，缓解循环网络的梯度消失',
-    highlights:['embed'],
-    note:'顺序处理：t 时刻必须等 t−1 算完，无法并行——这是 Transformer 要解决的核心痛点。' },
-  { year:2014, name:'Seq2Seq + Attention',
+    highlights:['rnn','lstm'],
+    note:'给 RNN 装上传送带：细胞状态近似线性流动。统治序列建模 15 年（GRU 是其 2014 年简化版）。' },
+  { year:2014, view:'pre', name:'Seq2Seq + GRU',
+    paper:'Sequence to Sequence Learning (Sutskever et al.) · Learning Phrase Representations (Cho et al.)',
+    contrib:'编码器-解码器框架确立，机器翻译神经网络化',
+    highlights:['lstm','s2s'],
+    note:'变长→变长的通用范式诞生；但整句被压进一个固定向量，长句信息溢出——瓶颈即机会。' },
+  { year:2015, view:'pre', name:'注意力机制',
     paper:'Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau et al.)',
-    contrib:'编码器-解码器框架 + 对齐注意力，机器翻译突破口',
-    highlights:['dec-cross'],
-    note:'注意力的起源：解码器每一步“回看”编码器全部状态，不再依赖单一固定向量。' },
-  { year:2017, name:'Transformer',
+    contrib:'解码器逐步「回看」全部编码状态，软对齐',
+    highlights:['s2s','batt','selfattn'],
+    note:'注意力的起源：α 权重动态加权编码状态（同年 Luong 提出点积版本）。只差一步——把注意力推广到序列自身。' },
+  /* ---- Transformer 与三大范式 ---- */
+  { year:2017, view:'orig', name:'Transformer', primary:true,
     paper:'Attention Is All You Need (Vaswani et al.)',
     contrib:'完全基于注意力，抛弃循环与卷积，训练全并行',
     highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2','dec-masked-mha','dec-cross'],
-    note:'本应用的主角：自注意力让任意两位置直接通信，路径长度 O(1)。',
-    primary:true },
-  { year:2018, name:'BERT',
+    note:'分水岭：自注意力让任意两位置 O(1) 直连。此后裂变为三大范式——只用 Encoder（BERT）、只用 Decoder（GPT）、完整 Enc-Dec（T5）。' },
+  { year:2018, view:'orig', name:'GPT-1（Decoder-Only 开端）',
+    paper:'Improving Language Understanding by Generative Pre-Training (Radford et al.)',
+    contrib:'只用 Decoder + 生成式预训练 + 微调',
+    highlights:['dec-input','dec-embed','dec-masked-mha','dec-an1','out','outp'],
+    note:'「Decoder-Only 也能做理解任务」：12 层 Block + LM Head，自回归目标一用到底——GPT 系路线图的起点。' },
+  { year:2018, view:'orig', name:'BERT（Encoder-Only）',
     paper:'BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al.)',
     contrib:'双向编码器预训练 + 微调范式，横扫 NLU 榜单',
     highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2'],
-    note:'只用 Encoder：双向上下文适合理解类任务（分类、问答）。' },
-  { year:2019, name:'GPT-2',
+    note:'只用 Encoder：双向上下文适合理解类任务（RoBERTa 2019 进一步打磨训练配方）。' },
+  { year:2019, view:'orig', name:'GPT-2',
     paper:'Language Models are Unsupervised Multitask Learners (Radford et al.)',
-    contrib:'15 亿参数解码器语言模型，零样本多任务',
+    contrib:'15 亿参数解码器语言模型，零样本多任务；Pre-LN 确立',
     highlights:['dec-input','dec-embed','dec-masked-mha','dec-an1','dec-ffn','dec-an3','out','outp'],
-    note:'只用 Decoder：因果掩码自回归生成，规模即能力。' },
-  { year:2020, name:'GPT-3',
+    note:'只用 Decoder：因果掩码自回归生成，规模即能力；Pre-LN 取代 Post-LN，深层训练从此稳定。' },
+  { year:2019, view:'orig', name:'T5（Enc-Dec 复兴）',
+    paper:'Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (Raffel et al.)',
+    contrib:'一切任务皆文本到文本，Encoder-Decoder 规模化验证',
+    highlights:['input','embed','enc-mha','dec-cross','out'],
+    note:'Encoder-Decoder 路线的集大成者（11B）；翻译/摘要等有「输入-输出」结构的任务至今仍常用此范式。' },
+  { year:2019, view:'attn', name:'MQA 多查询注意力',
+    paper:'Fast Transformer Decoding: One Write-Head is All You Need (Shazeer)',
+    contrib:'全头共享一组 KV，推理 Cache 骤降 h 倍',
+    highlights:['mha-ev','mqa'],
+    note:'效率演进线的第一枪：发现推理瓶颈在 KV Cache 而非参数——此后 MQA→GQA→MLA 一脉相承。' },
+  { year:2020, view:'orig', name:'GPT-3',
     paper:'Language Models are Few-Shot Learners (Brown et al.)',
     contrib:'1750 亿参数，上下文少样本学习（few-shot）',
     highlights:['dec-input','dec-masked-mha','out','outp'],
-    note:'结构与 GPT-2 相同，靠规模涌现出上下文学习能力——大模型时代的起点。' }
+    note:'结构与 GPT-2 相同，靠规模涌现出上下文学习——大模型时代的起点（ChatGPT 即其 RLHF 后代）。' },
+  { year:2020, view:'orig', name:'ViT（跨界）',
+    paper:'An Image is Worth 16x16 Words (Dosovitskiy et al.)',
+    contrib:'图像切 patch 当 token：Transformer 统一视觉',
+    highlights:['input','embed','enc-mha','enc-an1'],
+    note:'证明自注意力与模态无关——此后语音(Whisper)、蛋白质(AlphaFold2)全面 Transformer 化。' },
+  { year:2020, view:'ssm', name:'线性 Transformer',
+    paper:'Transformers are RNNs (Katharopoulos et al.)',
+    contrib:'φ 核化 + 结合律，复杂度 O(L²)→O(Ld²)',
+    highlights:['lin'],
+    note:'线性注意力开山：「Transformer 就是 RNN」。效率线与循环复兴线在此交汇。' },
+  { year:2021, view:'moe', name:'Switch Transformer',
+    paper:'Switch Transformers: Scaling to Trillion Parameter Models (Fedus et al.)',
+    contrib:'Top-1 稀疏路由，万亿参数 MoE（GShard 2020 首创 MoE+Transformer）',
+    highlights:['router','exp1','exp2','exp3','exp4','wsum'],
+    note:'MoE 与 Transformer 合体：总参数与单 token 计算解耦——万亿时代的钥匙。' },
+  { year:2021, view:'ssm', name:'S4',
+    paper:'Efficiently Modeling Long Sequences with Structured State Spaces (Gu et al.)',
+    contrib:'HiPPO + 结构化 SSM，长序列基准横扫',
+    highlights:['s4'],
+    note:'状态空间模型回归：连续系统离散化，训练当卷积、推理当 RNN——Mamba 的直系前身。' },
+  { year:2022, view:'attn', name:'FlashAttention',
+    paper:'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao et al.)',
+    contrib:'分块在线 softmax：精确注意力显存 O(L²)→O(L)',
+    highlights:['flash'],
+    note:'不改数学只改访存，成为全行业默认内核（v2 2023、v3 2024 持续进化）。长上下文训练由此平民化。' },
+  { year:2022, view:'ssm', name:'RWKV',
+    paper:'RWKV: Reinventing RNNs for the Transformer Era (Peng et al.)',
+    contrib:'通道级衰减：训练并行、推理 O(1) 状态的 RNN',
+    highlights:['lin','rwkv'],
+    note:'循环复兴的社区旗手：把注意力改写为可并行可递推的线性形式。' },
+  { year:2023, view:'dense', name:'LLaMA（现代 Dense 范式）',
+    paper:'LLaMA: Open and Efficient Foundation Language Models (Touvron et al.)',
+    contrib:'RMSNorm + RoPE + SwiGLU 三件套，开源生态引爆',
+    highlights:['tok','emb','rope','rms1','swiglu','lnf'],
+    note:'现代 Decoder-Only Dense 的定型：Pre-Norm/RMSNorm、旋转位置编码、门控 FFN——Qwen 等后续 Dense 模型全部沿用。' },
+  { year:2023, view:'attn', name:'GQA',
+    paper:'GQA: Training Generalized Multi-Query Transformer Models (Ainslie et al.)',
+    contrib:'分组共享 KV：质量与 Cache 的甜点（LLaMA-2 70B 起标配）',
+    highlights:['mqa','gqa'],
+    note:'MQA 与 MHA 的折中，还能从旧检查点 Uptraining 转换。Qwen2/3 全系采用。' },
+  { year:2023, view:'ssm', name:'Mamba',
+    paper:'Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao)',
+    contrib:'选择机制 + 硬件感知扫描，线性复杂度比肩 Transformer',
+    highlights:['s4','mamba'],
+    note:'SSM 高光时刻：参数随输入变化让模型「学会遗忘」；Mamba-2 (2024) 与线性注意力在 SSD 框架下统一。' },
+  { year:2023, view:'moe', name:'Mixtral 8x7B',
+    paper:'Mixtral of Experts (Jiang et al.)',
+    contrib:'开源 Top-2 稀疏 MoE：47B 总参 / 13B 激活',
+    highlights:['router','exp1','exp2','exp3','exp4','wsum'],
+    note:'MoE 走向主流开源：同等推理成本下质量直逼更大 Dense 模型——此后新旗舰多为 MoE。' },
+  { year:2024, view:'attn', name:'DeepSeek-V2/V3（MLA）',
+    paper:'DeepSeek-V2 / DeepSeek-V3 Technical Report (DeepSeek-AI)',
+    contrib:'MLA 潜在压缩 KV Cache 数十倍 + MoE 671B/37B 激活',
+    highlights:['gqa','mla','flash'],
+    note:'KV 压缩线的当前终点：Cache 只存低秩潜在向量；V3 再加无辅助损失均衡与 MTP 训练目标。' },
+  { year:2024, view:'ssm', name:'xLSTM / Mamba-2',
+    paper:'xLSTM: Extended Long Short-Term Memory (Beck et al.) · Transformers are SSMs (Dao & Gu)',
+    contrib:'指数门控矩阵记忆；SSM 与注意力统一为 SSD',
+    highlights:['xlstm','mamba'],
+    note:'LSTM 原作者 27 年后的回应；理论层面线性注意力与 SSM 合流——「混合架构」时代开启。' },
+  { year:2025, view:'moe', name:'Qwen3 / Kimi K2',
+    paper:'Qwen3 Technical Report (Alibaba) · Kimi K2: Open Agentic Intelligence (Moonshot AI)',
+    contrib:'细粒度 MoE 成主流：Qwen3-235B-A22B（128 选 8）；K2 1T 总参 / 32B 激活（MLA）',
+    highlights:['gqa','router','exp1','exp4'],
+    note:'当前开源旗舰的两种答案：Qwen3 同款双模式（思考/非思考）；K2 用 MoE+MLA 把激活参数压到 3%。' },
+  { year:2025, view:'attn', name:'NSA / MoBA 稀疏注意力',
+    paper:'Native Sparse Attention (DeepSeek-AI) · MoBA: Mixture of Block Attention (Moonshot AI)',
+    contrib:'可训练的块稀疏注意力，长上下文成本近线性',
+    highlights:['flash','sparse','linear'],
+    note:'精确注意力的下一站：只算重要块且稀疏模式进预训练——DeepSeek 与 Moonshot 同月交出答卷。' },
+  { year:2025, view:'ssm', name:'Kimi Linear（KDA）',
+    paper:'Kimi Linear: An Expressive, Efficient Attention Architecture (Moonshot AI)',
+    contrib:'门控线性注意力 3/4 层 + MLA 1/4 层混合，百万级上下文',
+    highlights:['kda','lin','mamba','mla'],
+    note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' }
 ];
 
 const Timeline = {
@@ -1383,7 +2058,7 @@ const Timeline = {
     HISTORY.forEach(h => {
       const li = document.createElement('li');
       li.className = 'tl-item';
-      li.dataset.year = h.year;
+      li.dataset.year = h.year + '_' + h.name;   // 同年多条目不冲突
       li.innerHTML =
         '<div class="tl-year">' + h.year + (h.primary ?
           ' <span style="font-size:11px;background:var(--c-accent);color:#fff;' +
@@ -1391,19 +2066,19 @@ const Timeline = {
         '<div class="tl-name">' + h.name + '</div>' +
         '<div class="tl-paper">《' + h.paper + '》</div>' +
         '<div class="tl-contrib">' + h.contrib + '</div>';
-      li.addEventListener('click', () => this.select(h.year));
+      li.addEventListener('click', () => this.select(h));
       ol.appendChild(li);
     });
   },
   /**
-   * 选中某年份：高亮时间轴项 + 架构图对应模块 + 显示注释。
-   * @param {number} year
+   * 选中条目：切换到对应架构视图 → 高亮节点 → 显示注释。
+   * @param {Object} h HISTORY 条目
    */
-  select(year){
-    const h = HISTORY.find(x => x.year === year);
-    if(!h) return;
+  select(h){
     document.querySelectorAll('.tl-item').forEach(li =>
-      li.classList.toggle('active', Number(li.dataset.year) === year));
+      li.classList.toggle('active', li.dataset.year === h.year + '_' + h.name));
+    if(ArchitectureRenderer.view !== h.view)
+      ArchitectureRenderer.setView(h.view);
     ArchitectureRenderer.highlight(h.highlights);
     const note = document.getElementById('timeline-note');
     note.innerHTML = '<b>' + h.year + ' · ' + h.name + '</b><br>' + h.note;
@@ -1721,6 +2396,7 @@ const DecoderDemo = {
     if(this.running){ this.running = false; return; }
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
     this.running = true;
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
@@ -1803,6 +2479,73 @@ const DecoderDemo = {
 
 document.getElementById('run-decoder').addEventListener('click',
   () => DecoderDemo.run());
+
+/* ============================================================
+   模块12b：MoE Top-K 路由演示（稀疏激活机制可视化，D8 同款免责：
+   门控为确定性伪随机，仅展示路由机制而非训练后的专家分工）
+   ============================================================ */
+const MoERouterDemo = {
+  running: false,
+
+  /** 主流程：逐 token 展示 Router 打分 → Top-2 专家激活 → 负载统计 */
+  async run(){
+    if(this.running){ this.running = false; return; }
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'moe') ArchitectureRenderer.setView('moe');
+    this.running = true;
+    const log = document.getElementById('step-log');
+    log.innerHTML = '';
+    AttentionHeatmap.clear();
+    log.insertAdjacentHTML('beforeend',
+      '<li><span class="log-note">⚠️ 门控为伪随机演示：仅展示「Top-K 稀疏激活」机制，' +
+      '真实模型经训练后专家会自发分工。</span></li>');
+
+    const toks = tokenizer.tokenize(text).slice(0, 6);
+    const E = 4;
+    const load = [0, 0, 0, 0];
+
+    for(const t of toks){
+      if(!this.running) break;
+      /* 由 token 字符码播种的确定性门控 logits */
+      let seed = 0;
+      for(const ch of t) seed = (seed * 31 + ch.charCodeAt(0)) | 0;
+      const logits = [...Array(E)].map((_, i) => Math.sin(seed * (i + 3)) * 1.3);
+      const mx = Math.max(...logits);
+      const exps = logits.map(v => Math.exp(v - mx));
+      const Z = exps.reduce((a, b) => a + b, 0);
+      const probs = exps.map(v => v / Z);
+      const order = [...probs.keys()].sort((a, b) => probs[b] - probs[a]).slice(0, 2);
+      order.forEach(i => load[i]++);
+
+      ArchitectureRenderer.highlight(
+        ['router', 'exp' + (order[0] + 1), 'exp' + (order[1] + 1)]);
+      const g = order.map(i =>
+        '<span class="chip">专家' + (i + 1) + ' g=' + probs[i].toFixed(2) + '</span>').join('');
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current"><span class="log-step">「' + t + '」</span>' + g +
+        '<span class="log-meta">Top-2 激活 · 其余 ' + (E - 2) +
+        ' 个专家本次跳过（激活参数 ≈ 2/' + E + '）</span></li>');
+      [...log.children].forEach(li => {
+        if(li !== log.lastElementChild){
+          li.classList.remove('current'); li.classList.add('done');
+        }
+      });
+      log.lastElementChild.scrollIntoView({ block:'nearest' });
+      document.getElementById('tensor-tracker').innerHTML =
+        '<b>MoE Router</b><br>gate logits <b>[1, ' + E + ']</b> → Top-2<br>' +
+        '总参数 ∝ E · 激活参数 ∝ K/E';
+      await sleep(650);
+    }
+    if(this.running){
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-step">专家负载统计：</span>' +
+        load.map((v, i) => '专家' + (i + 1) + '×' + v).join(' · ') +
+        '<span class="log-meta">负载不均时需均衡损失/偏置调节（Switch → DeepSeek-V3 演进）</span></li>');
+    }
+    this.running = false;
+  }
+};
 
 /* ============================================================
    模块13：代码导出（spec §6：当前配置 → tfjs 模型构建代码 + 一键复制）
@@ -2025,6 +2768,7 @@ const App = {
   runForward(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
     DecoderDemo.running = false;   // 打断解码演示
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
@@ -2063,6 +2807,7 @@ const App = {
   /** 超参数或输入变化时重置运行状态 */
   resetRunState(){
     DecoderDemo.running = false;
+    MoERouterDemo.running = false;
     DataFlowAnimator.stop();
     document.getElementById('step-log').innerHTML = '';
     document.getElementById('tensor-tracker').innerHTML =
@@ -2086,6 +2831,12 @@ document.getElementById('attn-heatmap').innerHTML =
 /* 自/交叉注意力切换按钮 */
 document.querySelectorAll('#kind-seg button').forEach(b =>
   b.addEventListener('click', () => AttentionHeatmap.setKind(b.dataset.kind)));
+
+/* 架构视图切换 + MoE 路由演示 */
+document.querySelectorAll('#view-seg button').forEach(b =>
+  b.addEventListener('click', () => ArchitectureRenderer.setView(b.dataset.view)));
+document.getElementById('moe-demo').addEventListener('click',
+  () => MoERouterDemo.run());
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
