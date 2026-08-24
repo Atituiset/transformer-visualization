@@ -275,6 +275,9 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 #run-btns .btn{flex:1;}
 #step-log{list-style:none;margin-top:6px;display:flex;flex-direction:column;gap:6px;}
 #log-hint{font-size:11.5px;color:var(--c-text-dim);margin-top:10px;}
+#step-ctl{display:flex;gap:6px;align-items:center;margin-top:12px;}
+#step-ctl .btn{padding:4px 11px;font-size:13px;line-height:1.4;}
+#sc-pos{font-family:var(--font-mono);font-size:12.5px;color:var(--c-text-dim);margin-left:auto;}
 #step-log li{
   border:1px solid var(--c-border);border-left:3px solid var(--c-primary-light);
   border-radius:8px;padding:7px 9px;font-size:13px;line-height:1.5;
@@ -432,8 +435,17 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       <button id="run-decoder" class="btn btn-accent">⏩ Decoder 演示</button>
     </div>
 
+    <div id="step-ctl">
+      <button id="sc-reset" class="btn" title="回到开始">⏮</button>
+      <button id="sc-prev" class="btn" title="上一步">◀</button>
+      <button id="sc-play" class="btn" title="播放 / 暂停">▶</button>
+      <button id="sc-next" class="btn" title="单步前进">⏭︎</button>
+      <button id="sc-end" class="btn" title="跳到结束">⤓</button>
+      <span id="sc-pos">0 / 0</span>
+    </div>
+
     <ol id="step-log"></ol>
-    <div id="log-hint">💡 点击步骤：跳到该步并暂停 · 再点当前行：单步前进 · 点击行：跳转/回退</div>
+    <div id="log-hint">💡 点击日志步骤：跳到该步并暂停 · 控制条可播放 / 单步 / 回退</div>
 
     <div id="tensor-tracker"><b>当前张量</b><br>待运行…</div>
 
@@ -2953,75 +2965,86 @@ const StepPlayer = {
   arm(steps, apply, onDone){
     this.steps = steps; this.apply = apply; this.onDone = onDone || null;
     this.cursor = -1;
+    this.syncPos(); this.setPlayBtn(false);
   },
-  /** 动画播放推进（由 DataFlowAnimator 调用） */
-  advance(s, i){ this.cursor = i; this.apply(s, i); },
-  /**
-   * 点击日志第 idx 行：
-   *  · 点当前行 → 单步前进（步进调试）
-   *  · 点前方行 → 快速补齐至该步并暂停
-   *  · 点后方行 → 回退到该步并暂停
-   *  · 在最后一步再点 → 触发 onDone（清除高亮）
-   */
-  goto(idx){
+  /** 应用第 i 步（唯一入口：维护 cursor + 刷新指示器） */
+  _set(i){
+    this.cursor = i;
+    this.apply(this.steps[i], i);
+    this.syncPos();
+  },
+  /** 动画播放推进（由 DataFlowAnimator 调用；其下标为切片局部值，始终顺序走 cursor+1） */
+  advance(){ this._set(this.cursor + 1); },
+  /** 从 cursor+1 自动播放 */
+  start(){
+    if(!this.steps.length) return;
     DataFlowAnimator.stop();
+    DataFlowAnimator.play(this.steps.slice(this.cursor + 1), {
+      onStep: (s, i) => this.advance(s, i),
+      onDone: () => { this.setPlayBtn(false);
+                      if(this.onDone) this.onDone(); }
+    });
+    this.setPlayBtn(true);
+  },
+  /** 单步前进 */
+  next(){
+    if(!this.steps.length) return;
+    DataFlowAnimator.stop(); this.setPlayBtn(false);
+    if(this.cursor + 1 >= this.steps.length){ this.finish(); return; }
+    this._set(this.cursor + 1);
+  },
+  /** 单步后退（移除当前行后重放前一步） */
+  prev(){
+    if(!this.steps.length || this.cursor <= 0) return;
+    DataFlowAnimator.stop(); this.setPlayBtn(false);
     const log = document.getElementById('step-log');
-    if(idx === this.cursor){
-      if(idx + 1 >= this.steps.length){
-        this.cursor = this.steps.length - 1;
-        if(this.onDone) this.onDone();
-        return;
-      }
-      idx = idx + 1;                       // 单步前进
-    }
+    if(log.lastElementChild) log.lastElementChild.remove();
+    this._set(this.cursor - 1);
+  },
+  /** 回到开始 */
+  reset(){
+    DataFlowAnimator.stop(); this.setPlayBtn(false);
+    App.resetRunState();
+    this.cursor = -1;
+    this.syncPos();
+  },
+  /** 快进到结束 */
+  toEnd(){
+    if(!this.steps.length) return;
+    DataFlowAnimator.stop(); this.setPlayBtn(false);
+    for(let i = this.cursor + 1; i < this.steps.length; i++) this._set(i);
+    this.finish();
+  },
+  finish(){
+    this.cursor = this.steps.length - 1;
+    this.syncPos();
+    if(this.onDone) this.onDone();
+  },
+  /** 点击日志第 idx 行：跳到该步并暂停（前方快进补齐 / 后方截断重放） */
+  goto(idx){
+    DataFlowAnimator.stop(); this.setPlayBtn(false);
+    const log = document.getElementById('step-log');
+    if(idx === this.cursor) return;
     if(idx > this.cursor){
       for(let i = this.cursor + 1; i <= idx; i++){
-        this.cursor = i;
-        this.apply(this.steps[i], i);      // 快速补齐（同步，无动画间隔）
+        this._set(i);                      /* 快速补齐（同步，无动画间隔） */
       }
     }else{
       /* 回退：apply 每步恰好追加一行，故截掉 idx 及之后再重放该步 */
       [...log.children].forEach((li, i) => { if(i >= idx) li.remove(); });
-      this.cursor = idx;
-      this.apply(this.steps[idx], idx);
+      this._set(idx);
     }
   },
-  /** 步骤解释：抽屉展示「这步在做什么」+ 实时张量信息 + 关联模块公式 */
-  explain(idx){
-    const s = this.steps[idx];
-    if(!s) return;
-    const det = (s.mod || s.moduleId) ? MODULE_DETAILS[s.mod || s.moduleId] : null;
-    const kindTitle = { tok:'分词', emb:'Embedding 查表', rope:'RoPE 旋转位置编码',
-      attn:'掩码自注意力', res1:'残差连接', res2:'残差连接', ffn:'前馈网络',
-      router:'MoE Router 门控', wsum:'稀疏加权合成', head:'LM Head',
-      gen:'逐词生成', note:'说明', end:'结束' }[s.kind] || '步骤说明';
-    let html = '';
-    if(s.note) html += '<p class="dw-note">' + s.note + '</p>';
-    const live = [];
-    if(s.shape) live.push('形状 <b>' + s.shape + '</b>');
-    if(s.stats) live.push('min ' + s.stats.min + ' · max ' + s.stats.max +
-                          ' · mean ' + s.stats.mean);
-    if(s.ms !== undefined) live.push('耗时 ' + s.ms + ' ms');
-    if(s.tokens) live.push('tokens：' + s.tokens.join(' / '));
-    if(live.length) html += '<div class="dw-live">' + live.join('<br>') + '</div>';
-    if(det){
-      html += '<div class="dp-sec"><span class="dp-label">这一步在做什么</span>' +
-              '<p class="dw-desc">' + det.desc + '</p></div>';
-      html += '<div class="dp-sec"><span class="dp-label">数学公式</span><div class="dp-formula">' +
-              det.latex.map((t, i) =>
-                '<div id="dp-tex-' + i + '" style="margin:6px 0;"></div>').join('') +
-              '</div></div>';
-      html += '<div class="dp-sec"><span class="dp-label">参数量</span>' +
-              '<span class="dp-params">' + det.params + '</span></div>';
-      if(det.refs && det.refs.length)
-        html += '<div class="dp-sec"><span class="dp-label">论文线</span><div class="dp-refs">' +
-                det.refs.map(r => '<span class="dp-ref">📄 ' + r + '</span>').join('') +
-                '</div></div>';
-    }
-    Drawer.open(s.label || kindTitle, html);
-    if(det) DetailPanel.renderTex(det);
+  syncPos(){
+    const el = document.getElementById('sc-pos');
+    if(el) el.textContent = Math.max(0, this.cursor + 1) + ' / ' + this.steps.length;
+  },
+  setPlayBtn(on){
+    const b = document.getElementById('sc-play');
+    if(b) b.textContent = on ? '\u23F8' : '\u25B6';
   }
 };
+
 /* 事件委托：点击日志任意行 → 跳转/步进 + 抽屉解释 */
 document.getElementById('step-log').addEventListener('click', e => {
   const li = e.target.closest('li');
@@ -3132,10 +3155,7 @@ const DecoderDemo = {
           window.Vocab.length + ']</b><br>softmax 后概率和 = 1<br>耗时 ' + d.ms + ' ms'
         : document.getElementById('tensor-tracker').innerHTML;
     }, () => ArchitectureRenderer.clearHighlight());
-    DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.advance(s, i),
-      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
-    });
+    StepPlayer.start();
   }
 };
 
@@ -3194,10 +3214,7 @@ const DenseDemo = {
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s), () => ArchitectureRenderer.clearHighlight());
-    DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.advance(s, i),
-      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
-    });
+    StepPlayer.start();
   },
 
   /** Dense 视图：整段预填充后逐词生成（每步整段重算，无 KV Cache 简化） */
@@ -3236,10 +3253,7 @@ const DenseDemo = {
     this._genData = data;
 
     StepPlayer.arm(steps, (s) => this._applyGen(s), () => ArchitectureRenderer.clearHighlight());
-    DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.advance(s, i),
-      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
-    });
+    StepPlayer.start();
   },
 
   _apply(s){
@@ -3372,10 +3386,7 @@ const MoEDemo = {
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s, tokens), () => ArchitectureRenderer.clearHighlight());
-    DataFlowAnimator.play(steps, {
-      onStep: (s, i) => StepPlayer.advance(s, i),
-      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
-    });
+    StepPlayer.start();
   },
 
   _apply(s, srcTokens){
@@ -3673,10 +3684,7 @@ const App = {
     AttentionHeatmap.setLayer(result.attnLayers.length - 1);
     StepPlayer.arm(result.steps, (s, idx) => this._applyStep(s, idx),
       () => ArchitectureRenderer.clearHighlight());
-    DataFlowAnimator.play(result.steps, {
-      onStep: (s, idx) => StepPlayer.advance(s, idx),
-      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
-    });
+    StepPlayer.start();
   },
   /** 单步应用：高亮模块 + 追加日志 + 更新张量追踪器 */
   _applyStep(s, idx){
@@ -3749,6 +3757,20 @@ document.getElementById('attn-heatmap').innerHTML =
 /* 自/交叉注意力切换按钮 */
 document.querySelectorAll('#kind-seg button').forEach(b =>
   b.addEventListener('click', () => AttentionHeatmap.setKind(b.dataset.kind)));
+
+/* 单步控制条：重置 / 上一步 / 播放暂停 / 单步前进 / 跳到结束 */
+(function(){
+  const bind = (id, fn) =>
+    document.getElementById(id).addEventListener('click', fn);
+  bind('sc-reset', () => StepPlayer.reset());
+  bind('sc-prev',  () => StepPlayer.prev());
+  bind('sc-play',  () => {
+    if(DataFlowAnimator.playing){ DataFlowAnimator.stop(); StepPlayer.setPlayBtn(false); }
+    else StepPlayer.start();
+  });
+  bind('sc-next',  () => StepPlayer.next());
+  bind('sc-end',   () => StepPlayer.toEnd());
+})();
 
 /* 架构视图切换（运行按钮由 updateRunButtons 随视图自适应） */
 document.querySelectorAll('#view-seg button').forEach(b =>
