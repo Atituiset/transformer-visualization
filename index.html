@@ -524,7 +524,7 @@ class Tokenizer {
    * @returns {string[]}
    */
   buildVocab(){
-    const set = new Set(['<pad>','<bos>','<eos>']);
+    const set = new Set(['<pad>','<bos>','<eos>','<unk>']);
     this.words.forEach(w => set.add(w));
     for(const p of this.getPresets())
       for(const t of this.tokenize(p)) set.add(t);
@@ -758,9 +758,16 @@ class FeedForward {
     this.W1 = toVar(glorotInit([dModel, dFF])); this.b1 = toVar(tf.zeros([dFF]));
     this.W2 = toVar(glorotInit([dFF, dModel])); this.b2 = toVar(tf.zeros([dModel]));
   }
-  forward(x){
-    return tf.tidy(() =>
-      tf.relu(x.matMul(this.W1).add(this.b1)).matMul(this.W2).add(this.b2));
+  /**
+   * @param {tf.Tensor} x [B,L,d]
+   * @param {Object|null} snap 可选快照收集器：{mid:number[][][]} 记录 ReLU 后中间激活
+   */
+  forward(x, snap = null){
+    return tf.tidy(() => {
+      const mid = tf.relu(x.matMul(this.W1).add(this.b1));
+      if(snap) snap.mid = mid.arraySync();
+      return mid.matMul(this.W2).add(this.b2);
+    });
   }
   dispose(){ this.W1.dispose(); this.b1.dispose(); this.W2.dispose(); this.b2.dispose(); }
 }
@@ -775,13 +782,37 @@ class EncoderLayer {
   /**
    * x ← LN1(x + MHA(x))；x ← LN2(x + FFN(x))
    * @param {tf.Tensor} x [B,L,d]
+   * @param {Object|null} snap 可选快照收集器（引擎回放用）：
+   *        {attnOut, afterAdd1, ffnMid, out, msAttn, msFfn}
    * @returns {{output:tf.Tensor, weights:{pre:number[][][],post:number[][][]}}}
    */
-  forward(x){
+  forward(x, snap = null){
     return tf.tidy(() => {
+      let t = performance.now();
       const attn = this.mha.forward(x, x, x, null);
+      if(snap){
+        snap.attnOut = attn.output.arraySync();
+        snap.msAttn = performance.now() - t;
+      }
+      t = performance.now();
       const h = this.ln1.normalize(x.add(attn.output));
-      const out = this.ln2.normalize(h.add(this.ffn.forward(h)));
+      if(snap){
+        snap.afterAdd1 = h.arraySync();
+        snap.msAdd1 = performance.now() - t;
+      }
+      t = performance.now();
+      const fSnap = snap ? {} : null;
+      const fOut = this.ffn.forward(h, fSnap);
+      if(snap){
+        snap.ffnMid = fSnap.mid;
+        snap.msFfn = performance.now() - t;
+      }
+      t = performance.now();
+      const out = this.ln2.normalize(h.add(fOut));
+      if(snap){
+        snap.out = out.arraySync();
+        snap.msAdd2 = performance.now() - t;
+      }
       return { output: out, weights: attn.weights };
     });
   }
@@ -877,21 +908,39 @@ class Transformer {
   }
   /**
    * 编码器前向（对外接口）：tidy 包裹，返回纯数组快照。
-   * @returns {{emb:number[][][], afterPE:number[][][], perLayer:Array, final:number[][][]}}
+   * @param {number[]} tokenIds 源序列索引
+   * @param {boolean} withSnaps true 时逐子层记录快照与耗时（引擎回放用）
+   * @returns {{emb:number[][][], afterPE:number[][][], perLayer:Array,
+   *            final:number[][][], timings:Object}}
    */
-  encode(tokenIds){
+  encode(tokenIds, withSnaps = false){
     return tf.tidy(() => {
       const collected = [];
+      const timings = {};
       const Ls = tokenIds.length;
+      let t = performance.now();
       const ids = tf.tensor1d(tokenIds, 'int32');
-      const emb = tf.gather(this.embed, ids)
-                  .mul(Math.sqrt(Config.d_model))
-                  .reshape([1, Ls, Config.d_model]);
-      const embSnap = emb.arraySync();
-      const peSnap = emb.add(
-        this.pe.slice([0, 0, 0], [1, Ls, Config.d_model])).arraySync();
-      const final = this._encodeTensor(tokenIds, collected).arraySync();
-      return { emb: embSnap, afterPE: peSnap, perLayer: collected, final };
+      let x = tf.gather(this.embed, ids)
+              .mul(Math.sqrt(Config.d_model))
+              .reshape([1, Ls, Config.d_model]);
+      const embSnap = x.arraySync();
+      if(withSnaps) timings.emb = performance.now() - t;
+      t = performance.now();
+      x = x.add(this.pe.slice([0, 0, 0], [1, Ls, Config.d_model]));
+      const peSnap = x.arraySync();
+      if(withSnaps) timings.pe = performance.now() - t;
+      for(let i = 0; i < this.encLayers.length; i++){
+        const snap = withSnaps ? {} : null;
+        t = performance.now();
+        const r = this.encLayers[i].forward(x, snap);
+        x = r.output;
+        const entry = { pre: r.weights.pre, post: r.weights.post };
+        if(withSnaps){ entry.snap = snap; entry.msTotal = performance.now() - t; }
+        collected.push(entry);
+      }
+      const final = x.arraySync();
+      return { emb: embSnap, afterPE: peSnap, perLayer: collected,
+               final, timings };
     });
   }
   /**
@@ -1515,6 +1564,128 @@ const TopKChart = {
 };
 
 /* ============================================================
+   模块11：前向传播引擎（快照式）+ 数据流分步动画
+   ============================================================ */
+/** 嵌套数组的形状，如 [1, 5, 512] */
+function shapeOf(a){
+  const s = []; let x = a;
+  while(Array.isArray(x)){ s.push(x.length); x = x[0]; }
+  return s;
+}
+/** 嵌套数组的 min / max / mean（两位小数） */
+function statsOf(a){
+  const flat = a.flat(Infinity);
+  let mn = Infinity, mx = -Infinity, sum = 0;
+  for(const v of flat){ if(v < mn) mn = v; if(v > mx) mx = v; sum += v; }
+  return { min:+mn.toFixed(2), max:+mx.toFixed(2),
+           mean:+(sum / flat.length).toFixed(2) };
+}
+
+const ForwardEngine = {
+  /**
+   * 一次性跑完编码器前向（tidy 内），产出纯数据步骤快照供动画回放。
+   * @param {string} text 用户输入文本
+   * @returns {{tokens:string[], oov:number, steps:Object[],
+   *            attnLayers:Array, totalMs:number}}
+   */
+  run(text){
+    const t0 = performance.now();
+    const tokens = tokenizer.tokenize(text);
+    /* 未登录词 → <unk>（避免 tf.gather 越界） */
+    const unk = window.Vocab.indexOf('<unk>');
+    let oov = 0;
+    const ids = tokens.map(tk => {
+      const i = window.Vocab.indexOf(tk);
+      if(i < 0){ oov++; return unk; }
+      return i;
+    });
+    const enc = transformer.encode(ids, true);
+    const totalMs = performance.now() - t0;
+    const steps = [];
+    /* ① 分词 */
+    steps.push({ label:'分词', moduleId:'input', tokens, ms:0,
+      meta: tokens.length + ' 个 token' +
+            (oov ? '（' + oov + ' 个未登录词以 <unk> 代替）' : '') });
+    /* ② Embedding */
+    steps.push({ label:'Embedding 查表 × √d_model', moduleId:'embed',
+      shape: fmtShape(shapeOf(enc.emb)), stats: statsOf(enc.emb),
+      ms: +(enc.timings.emb || 0).toFixed(1) });
+    /* ③ + 位置编码 */
+    steps.push({ label:'+ 位置编码', moduleId:'pe',
+      shape: fmtShape(shapeOf(enc.afterPE)), stats: statsOf(enc.afterPE),
+      ms: +(enc.timings.pe || 0).toFixed(1) });
+    /* ④ 逐层：注意力 → Add&Norm → FFN → Add&Norm */
+    enc.perLayer.forEach((lw, i) => {
+      const s = lw.snap;
+      steps.push({ label:'第 ' + (i+1) + ' 层 · 多头自注意力', moduleId:'enc-mha',
+        layer:i, shape: fmtShape(shapeOf(s.attnOut)), stats: statsOf(s.attnOut),
+        ms:+s.msAttn.toFixed(1),
+        note:'注意力分数 [' + Config.num_heads + ', ' + tokens.length + ', ' +
+             tokens.length + '] 已同步到热力图' });
+      steps.push({ label:'第 ' + (i+1) + ' 层 · Add & Norm', moduleId:'enc-an1',
+        layer:i, shape: fmtShape(shapeOf(s.afterAdd1)), stats: statsOf(s.afterAdd1),
+        ms:+s.msAdd1.toFixed(1), note:'残差连接 + LayerNorm' });
+      steps.push({ label:'第 ' + (i+1) + ' 层 · FFN 中间层（ReLU 后）', moduleId:'enc-ffn',
+        layer:i, shape: fmtShape(shapeOf(s.ffnMid)), stats: statsOf(s.ffnMid),
+        ms:+s.msFfn.toFixed(1), note:'扩维至 d_ff=' + Config.d_ff });
+      steps.push({ label:'第 ' + (i+1) + ' 层 · Add & Norm', moduleId:'enc-an2',
+        layer:i, shape: fmtShape(shapeOf(s.out)), stats: statsOf(s.out),
+        ms:+s.msAdd2.toFixed(1) });
+    });
+    /* ⑤ 最终输出表示 */
+    steps.push({ label:'编码器最终输出表示', moduleId:'enc-an2',
+      shape: fmtShape(shapeOf(enc.final)), stats: statsOf(enc.final),
+      ms:+totalMs.toFixed(1), note:'总耗时（含快照取数）' });
+    return { tokens, oov, steps, attnLayers: enc.perLayer, totalMs };
+  }
+};
+
+const DataFlowAnimator = {
+  timer:null, steps:[], idx:0, playing:false,
+  /**
+   * 分步回放。步进间隔随步骤总数自适应（总时长约 3.6s）。
+   * @param {Object[]} steps
+   * @param {{onStep:Function, onDone:Function}} opts
+   */
+  play(steps, opts){
+    this.stop(); this.idx = 0; this.steps = steps;
+    const interval = Math.max(120, Math.min(420, Math.floor(3600 / steps.length)));
+    this.playing = true;
+    const tick = () => {
+      if(this.idx >= this.steps.length){
+        this.playing = false;
+        if(opts.onDone) opts.onDone();
+        return;
+      }
+      const s = this.steps[this.idx++];
+      opts.onStep(s, this.idx - 1);
+      this.timer = setTimeout(tick, interval);
+    };
+    tick();
+  },
+  stop(){ if(this.timer){ clearTimeout(this.timer); this.timer = null; } this.playing = false; }
+};
+
+/** 步骤 → 日志行 HTML（①②… 编号 + 形状 + 统计 + 耗时） */
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+function logRowHTML(s, idx){
+  const num = CIRCLED[idx] || (idx + 1) + '.';
+  let html = '<span class="log-step">' + num + ' ' + s.label + '</span>';
+  if(s.tokens){
+    html += '<br>' + s.tokens.map(t => '<span class="chip">' + t + '</span>').join('');
+  }
+  if(s.shape) html += '<br><span class="log-shape">' + s.shape + '</span>';
+  const meta = [];
+  if(s.stats) meta.push('min ' + s.stats.min + ' · max ' + s.stats.max +
+                        ' · mean ' + s.stats.mean);
+  if(s.ms !== undefined) meta.push(s.ms + ' ms');
+  if(meta.length) html += '<span class="log-meta">' + meta.join(' · ') + '</span>';
+  if(s.note) html += '<span class="log-meta" style="color:var(--c-accent);">' +
+                     s.note + '</span>';
+  return '<li>' + html + '</li>';
+}
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
@@ -1545,6 +1716,72 @@ window.addEventListener('config-changed',
 document.getElementById('input-text').addEventListener('input',
   () => PEWave.render(curSeqLen(), Config.d_model));
 PEWave.render(curSeqLen(), Config.d_model);
+
+/* ============================================================
+   模块14（续）：主控制器 App —— 事件绑定与状态管理
+   ============================================================ */
+const App = {
+  lastRun: null,
+
+  /** 「开始前向传播」：计算一次 → 热力图就绪 → 分步动画回放 */
+  runForward(){
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    DataFlowAnimator.stop();
+    const log = document.getElementById('step-log');
+    log.innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+    const result = ForwardEngine.run(text);
+    this.lastRun = result;
+    /* 热力图数据就绪（默认展示最后一层） */
+    AttentionHeatmap.setData({
+      tokens: result.tokens, layers: result.attnLayers, kind: 'self' });
+    AttentionHeatmap.setLayer(result.attnLayers.length - 1);
+    DataFlowAnimator.play(result.steps, {
+      onStep: (s, idx) => this._applyStep(s, idx),
+      onDone: () => ArchitectureRenderer.clearHighlight()
+    });
+  },
+  /** 单步应用：高亮模块 + 追加日志 + 更新张量追踪器 */
+  _applyStep(s, idx){
+    ArchitectureRenderer.highlight([s.moduleId]);
+    if(s.layer !== undefined) AttentionHeatmap.setLayer(s.layer);
+    const log = document.getElementById('step-log');
+    [...log.children].forEach(li => {
+      li.classList.remove('current'); li.classList.add('done');
+    });
+    log.insertAdjacentHTML('beforeend', logRowHTML(s, idx));
+    const li = log.lastElementChild;
+    li.classList.add('current');
+    li.scrollIntoView({ block:'nearest' });
+    document.getElementById('tensor-tracker').innerHTML =
+      '<b>当前张量</b> · ' + s.label + '<br>' +
+      (s.shape ? '形状 <b>' + s.shape + '</b><br>' : '') +
+      (s.stats ? 'min ' + s.stats.min + ' / max ' + s.stats.max +
+                ' / mean ' + s.stats.mean : '') +
+      (s.ms !== undefined ? '<br>耗时 ' + s.ms + ' ms' : '');
+  },
+  /** 超参数或输入变化时重置运行状态 */
+  resetRunState(){
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML = '';
+    document.getElementById('tensor-tracker').innerHTML =
+      '<b>当前张量</b><br>待运行…';
+    AttentionHeatmap.clear();
+    ArchitectureRenderer.clearHighlight();
+  }
+};
+
+document.getElementById('run-forward').addEventListener('click',
+  () => App.runForward());
+
+/* 配置变化：清空运行状态（模型已由模块6监听重建） */
+window.addEventListener('config-changed', () => App.resetRunState());
+
+/* 热力图初始占位提示 */
+document.getElementById('attn-heatmap').innerHTML =
+  '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
+  '运行「开始前向传播」后，此处显示逐层注意力热力图</div>';
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
