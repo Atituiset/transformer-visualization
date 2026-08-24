@@ -16,6 +16,9 @@
 <title>Transformer 架构交互式可视化</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231a237e"/><text x="16" y="22" font-size="16" text-anchor="middle" fill="%23ff6f00" font-family="sans-serif" font-weight="bold">T</text></svg>'>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
 /* ============================================================
    样式：主题变量（spec 配色：主色深蓝 / 强调琥珀 / 浅灰背景）
@@ -31,8 +34,8 @@
   --c-border:#dde3ec;
   --c-code-bg:#eef1f7;
   --c-ok:#2e7d32;
-  --font-main:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
-  --font-mono:"JetBrains Mono","Fira Code",Consolas,monospace;
+  --font-main:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Fira Code",Consolas,"Noto Sans SC",monospace;
 }
 html[data-theme="dark"]{
   --c-primary:#8c9eff;
@@ -1097,6 +1100,192 @@ const DetailPanel = {
     }
   }
 };
+
+/* ============================================================
+   模块8：架构渲染器（D3/SVG 编码器-解码器结构图）
+   ============================================================ */
+const ARCH_LAYOUT = { W: 760, H: 690, nodeW: 196, nodeH: 42 };
+
+/** 节点表：id、列坐标、标签（sub 为第二行小字）、详情键、tooltip */
+const ARCH_NODES = [
+  /* ---- Encoder 列 ---- */
+  { id:'input',    x:80,  y:48,  label:'输入 Tokens',            sub:'分词后的索引序列', detail:'input',
+    tip:'源句分词得到的 token 索引序列' },
+  { id:'embed',    x:80,  y:112, label:'Embedding',              sub:'查表后 × √d_model', detail:'embed',
+    tip:'词向量查表并放大，使与位置编码量级匹配' },
+  { id:'pe',       x:80,  y:176, label:'+ Positional Encoding',  detail:'pe',
+    tip:'正弦位置编码，为模型注入词序信息' },
+  { id:'enc-mha',  x:80,  y:262, label:'多头自注意力',           sub:'Self-Attention（全并行）', detail:'enc-mha',
+    tip:'每个位置关注同句所有位置，一次矩阵运算完成' },
+  { id:'enc-an1',  x:80,  y:320, label:'Add & Norm',             detail:'addnorm',
+    tip:'残差连接稳定梯度，层归一化稳定分布' },
+  { id:'enc-ffn',  x:80,  y:378, label:'前馈网络 FFN',           sub:'d_model → d_ff → d_model', detail:'ffn',
+    tip:'逐位置两层 MLP，参数量的主要来源' },
+  { id:'enc-an2',  x:80,  y:436, label:'Add & Norm',             detail:'addnorm',
+    tip:'第二个残差 + 归一化子层' },
+  /* ---- Decoder 列 ---- */
+  { id:'dec-input',      x:458, y:48,  label:'目标输入（右移一位）', sub:'以 <bos> 开头', detail:'input',
+    tip:'训练时整体右移；推理时逐步喂入已生成前缀' },
+  { id:'dec-embed',      x:458, y:112, label:'Embedding + 位置编码', detail:'embed',
+    tip:'目标序列的嵌入与位置编码' },
+  { id:'dec-masked-mha', x:458, y:198, label:'掩码多头自注意力',     sub:'只允许看 j ≤ i 的位置', detail:'dec-masked-mha',
+    tip:'因果掩码防止偷看未来位置' },
+  { id:'dec-an1',        x:458, y:256, label:'Add & Norm', detail:'addnorm', tip:'残差 + 层归一化' },
+  { id:'dec-cross',      x:458, y:314, label:'交叉注意力', sub:'Q←解码器，K/V←编码器', detail:'dec-cross',
+    tip:'解码器读取源句信息的唯一入口' },
+  { id:'dec-an2',        x:458, y:372, label:'Add & Norm', detail:'addnorm', tip:'残差 + 层归一化' },
+  { id:'dec-ffn',        x:458, y:430, label:'前馈网络 FFN', detail:'ffn', tip:'逐位置两层 MLP' },
+  { id:'dec-an3',        x:458, y:488, label:'Add & Norm', detail:'addnorm', tip:'残差 + 层归一化' },
+  { id:'out',            x:458, y:568, label:'Linear + Softmax', sub:'投影到词表 |V|', detail:'out',
+    tip:'末位置隐状态 → 全词表概率分布' },
+  { id:'outp',           x:458, y:632, label:'输出概率 P(u|x)', sub:'argmax 作为下一步输入', detail:'out',
+    tip:'取概率最大者作为下一个 token，循环生成' }
+];
+
+/** 堆叠外框（视觉分组，非交互） */
+const ARCH_FRAMES = [
+  { x:62,  y:224, w:232, h:290, label:'Encoder Layer × N' },
+  { x:440, y:160, w:232, h:372, label:'Decoder Layer × N' }
+];
+
+/** 主干连线（from 节点底部中心 → to 节点顶部中心） */
+const ARCH_EDGES = [
+  ['input','embed'], ['embed','pe'],
+  ['enc-mha','enc-an1'], ['enc-an1','enc-ffn'], ['enc-ffn','enc-an2'],
+  ['dec-input','dec-embed'],
+  ['dec-masked-mha','dec-an1'], ['dec-an1','dec-cross'], ['dec-cross','dec-an2'],
+  ['dec-ffn','dec-an3'],
+  ['out','outp']
+];
+/** 特殊路径边（手工贝塞尔） */
+const ARCH_SPECIAL_EDGES = [
+  /* pe → 编码器栈入口 */
+  { d:'M 178 218 L 178 262', label:'' },
+  /* 编码器输出 → 解码器交叉注意力（K/V 记忆） */
+  { d:'M 276 457 C 350 457, 384 335, 458 335', label:'K, V（编码器记忆）', lx:352, ly:378 },
+  /* dec-embed → 解码器栈入口 */
+  { d:'M 556 154 L 556 198', label:'' },
+  /* dec-an3 → 输出层 */
+  { d:'M 556 530 L 556 568', label:'' }
+];
+/** 残差旁路（琥珀虚线）：从子层输入侧绕行至对应 Add & Norm 右缘 */
+const ARCH_RESIDUALS = [
+  'M 276 197 C 318 197, 318 341, 276 341',   /* pe → enc-an1 */
+  'M 276 283 C 322 283, 322 457, 276 457',   /* enc-mha → enc-an2 */
+  'M 654 219 C 700 219, 700 277, 654 277',   /* dec-masked-mha → dec-an1 */
+  'M 654 335 C 706 335, 706 393, 654 393',   /* dec-cross → dec-an2 */
+  'M 654 451 C 700 451, 700 509, 654 509'    /* dec-ffn → dec-an3 */
+];
+
+const ArchitectureRenderer = {
+  /** @type {d3.Selection|null} */
+  svg: null,
+  /** 初始化：绘制箭头 marker 与整图 */
+  init(){
+    this.svg = d3.select('#arch-svg')
+      .attr('viewBox', '0 0 ' + ARCH_LAYOUT.W + ' ' + ARCH_LAYOUT.H);
+    this.svg.selectAll('*').remove();
+    this.svg.append('defs').append('marker')
+      .attr('id','arrow').attr('viewBox','0 0 10 10')
+      .attr('refX',9).attr('refY',5)
+      .attr('markerWidth',7).attr('markerHeight',7)
+      .attr('orient','auto-start-reverse')
+      .append('path').attr('d','M 0 0 L 10 5 L 0 10 z')
+      .attr('fill','var(--c-text-dim)');
+    /* 列标题 */
+    this.svg.append('text').attr('class','col-title')
+      .attr('x',178).attr('y',26).attr('text-anchor','middle').text('Encoder');
+    this.svg.append('text').attr('class','col-title')
+      .attr('x',556).attr('y',26).attr('text-anchor','middle').text('Decoder');
+    this._drawFrames();
+    this._drawEdges();
+    this._drawNodes();
+  },
+  _drawFrames(){
+    const g = this.svg.append('g');
+    ARCH_FRAMES.forEach(f => {
+      g.append('rect').attr('class','frame-rect')
+       .attr('x',f.x).attr('y',f.y).attr('width',f.w).attr('height',f.h)
+       .attr('rx',14)
+       .attr('fill','none').attr('stroke','var(--c-primary-light)')
+       .attr('stroke-dasharray','7 5').attr('stroke-width',1.2).attr('opacity',.8);
+      g.append('text').attr('x',f.x+f.w-10).attr('y',f.y+18)
+       .attr('text-anchor','end')
+       .attr('fill','var(--c-text-dim)').attr('font-size',12)
+       .style('font-family','var(--font-mono)').text(f.label);
+    });
+  },
+  _drawEdges(){
+    const g = this.svg.append('g');
+    const byId = Object.fromEntries(ARCH_NODES.map(n => [n.id, n]));
+    ARCH_EDGES.forEach(([a, b]) => {
+      const na = byId[a], nb = byId[b];
+      g.append('line').attr('class','edge')
+       .attr('x1', na.x + ARCH_LAYOUT.nodeW/2).attr('y1', na.y + ARCH_LAYOUT.nodeH)
+       .attr('x2', nb.x + ARCH_LAYOUT.nodeW/2).attr('y2', nb.y - 2);
+    });
+    ARCH_SPECIAL_EDGES.forEach(e => {
+      g.append('path').attr('class','edge').attr('d', e.d);
+      if(e.label){
+        g.append('text').attr('x',e.lx).attr('y',e.ly)
+         .attr('text-anchor','middle').attr('font-size',11.5)
+         .attr('fill','var(--c-text-dim)')
+         .style('font-family','var(--font-mono)').text(e.label);
+      }
+    });
+    ARCH_RESIDUALS.forEach(d =>
+      g.append('path').attr('class','edge residual').attr('d', d));
+  },
+  _drawNodes(){
+    const self = this;
+    const tip = document.getElementById('arch-tooltip');
+    const wrap = document.getElementById('arch-wrap');
+    const g = this.svg.append('g').selectAll('g.node').data(ARCH_NODES)
+      .join('g').attr('class','node')
+      .attr('transform', n => 'translate(' + n.x + ',' + n.y + ')');
+    g.append('rect')
+      .attr('width', ARCH_LAYOUT.nodeW).attr('height', ARCH_LAYOUT.nodeH)
+      .attr('rx', 9);
+    g.append('text')
+      .attr('x', ARCH_LAYOUT.nodeW/2).attr('y', n => n.sub ? 18 : 26)
+      .attr('text-anchor','middle')
+      .text(n => n.label);
+    g.filter(n => n.sub).append('text')
+      .attr('class','sub')
+      .attr('x', ARCH_LAYOUT.nodeW/2).attr('y', 33)
+      .attr('text-anchor','middle')
+      .text(n => n.sub);
+    /* 事件：点击选中 → 详情面板；悬停 → tooltip */
+    g.on('click', function(ev, n){
+      ev.stopPropagation();
+      ArchitectureRenderer.highlight([n.id]);
+      DetailPanel.show(n.detail || n.id);
+    }).on('mousemove', function(ev, n){
+      const r = wrap.getBoundingClientRect();
+      tip.textContent = n.tip || n.label;
+      tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 240) + 'px';
+      tip.style.top  = (ev.clientY - r.top + 14) + 'px';
+      tip.style.opacity = 1;
+    }).on('mouseleave', () => { tip.style.opacity = 0; });
+  },
+  /**
+   * 高亮指定节点集合：命中的加描边发光，其余降透明度。
+   * @param {string[]} ids 节点 id 数组
+   */
+  highlight(ids){
+    const set = new Set(ids);
+    this.svg.selectAll('g.node')
+      .classed('dim',   n => !set.has(n.id))
+      .classed('active',n =>  set.has(n.id));
+  },
+  clearHighlight(){
+    this.svg.selectAll('g.node').classed('dim', false).classed('active', false);
+  }
+};
+
+ArchitectureRenderer.init();
+document.getElementById('arch-svg').addEventListener('click', () =>
+  ArchitectureRenderer.clearHighlight());
 
 /* ============================================================
    模块14（接线部分）：超参数面板事件绑定
