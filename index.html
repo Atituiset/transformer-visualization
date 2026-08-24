@@ -352,7 +352,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
             <button data-kind="self" class="on">自注意力</button>
             <button data-kind="cross">交叉注意力</button>
           </span>
-          <select id="layer-select" style="width:auto;"></select>
+          <select id="layer-select" style="display:none;width:auto;"></select>
         </div>
         <div class="hm-scroll"><div id="attn-heatmap"></div></div>
         <div class="hm-tip" id="hm-tip"></div>
@@ -2427,6 +2427,9 @@ const AttentionHeatmap = {
     this.head = 0; this.layer = 0;
     /* 自/交叉切换段控：仅当携带双份数据（解码演示）时显示 */
     document.getElementById('kind-seg').style.display = d.alt ? '' : 'none';
+    /* 启用控件组（clear 后处于禁用态） */
+    const ctl = document.getElementById('heatmap-controls');
+    ctl.style.opacity = ''; ctl.style.pointerEvents = '';
     this._buildControls();
     this._draw();
   },
@@ -2449,10 +2452,19 @@ const AttentionHeatmap = {
     document.querySelectorAll('#kind-seg button').forEach(b =>
       b.classList.toggle('on', b.dataset.kind === k));
   },
-  setHead(i){ this.head = i; this._syncControls(); this._draw(); },
-  setStage(s){ this.stage = s; this._syncControls(); this._draw(); },
-  setLayer(i){ this.layer = i; this._syncControls(); this._draw(); },
-  clear(){ document.getElementById('attn-heatmap').innerHTML = ''; this.data = null; },
+  setHead(i){ if(!this.data) return; this.head = i; this._syncControls(); this._draw(); },
+  setStage(s){ if(!this.data) return; this.stage = s; this._syncControls(); this._draw(); },
+  setLayer(i){ if(!this.data) return; this.layer = i; this._syncControls(); this._draw(); },
+  clear(){
+    document.getElementById('attn-heatmap').innerHTML =
+      '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
+      '运行「开始前向传播」后，此处显示逐层注意力热力图</div>';
+    this.data = null;
+    /* 禁用整组控件（含层下拉），避免「点了没反应」的假死观感 */
+    document.getElementById('layer-select').style.display = 'none';
+    const ctl = document.getElementById('heatmap-controls');
+    ctl.style.opacity = .55; ctl.style.pointerEvents = 'none';
+  },
 
   _buildControls(){
     const seg = document.getElementById('head-seg');
@@ -3140,10 +3152,15 @@ document.getElementById('run-forward').addEventListener('click',
 /* 配置变化：清空运行状态（模型已由模块6监听重建） */
 window.addEventListener('config-changed', () => App.resetRunState());
 
-/* 热力图初始占位提示 */
+/* 热力图初始占位提示；控件组在无数据前禁用置灰 */
 document.getElementById('attn-heatmap').innerHTML =
   '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
   '运行「开始前向传播」后，此处显示逐层注意力热力图</div>';
+(function(){
+  const ctl = document.getElementById('heatmap-controls');
+  ctl.style.opacity = .55; ctl.style.pointerEvents = 'none';
+  ctl.title = '运行「开始前向传播」或「Decoder 演示」后可用';
+})();
 
 /* 自/交叉注意力切换按钮 */
 document.querySelectorAll('#kind-seg button').forEach(b =>
