@@ -1288,6 +1288,81 @@ document.getElementById('arch-svg').addEventListener('click', () =>
   ArchitectureRenderer.clearHighlight());
 
 /* ============================================================
+   模块9：历史演进时间轴（spec §1，2000 → 2020 六节点）
+   ============================================================ */
+const HISTORY = [
+  { year:2000, name:'RNN / LSTM',
+    paper:'Long Short-Term Memory (Hochreiter & Schmidhuber)',
+    contrib:'门控记忆单元，缓解循环网络的梯度消失',
+    highlights:['embed'],
+    note:'顺序处理：t 时刻必须等 t−1 算完，无法并行——这是 Transformer 要解决的核心痛点。' },
+  { year:2014, name:'Seq2Seq + Attention',
+    paper:'Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau et al.)',
+    contrib:'编码器-解码器框架 + 对齐注意力，机器翻译突破口',
+    highlights:['dec-cross'],
+    note:'注意力的起源：解码器每一步“回看”编码器全部状态，不再依赖单一固定向量。' },
+  { year:2017, name:'Transformer',
+    paper:'Attention Is All You Need (Vaswani et al.)',
+    contrib:'完全基于注意力，抛弃循环与卷积，训练全并行',
+    highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2','dec-masked-mha','dec-cross'],
+    note:'本应用的主角：自注意力让任意两位置直接通信，路径长度 O(1)。',
+    primary:true },
+  { year:2018, name:'BERT',
+    paper:'BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al.)',
+    contrib:'双向编码器预训练 + 微调范式，横扫 NLU 榜单',
+    highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2'],
+    note:'只用 Encoder：双向上下文适合理解类任务（分类、问答）。' },
+  { year:2019, name:'GPT-2',
+    paper:'Language Models are Unsupervised Multitask Learners (Radford et al.)',
+    contrib:'15 亿参数解码器语言模型，零样本多任务',
+    highlights:['dec-input','dec-embed','dec-masked-mha','dec-an1','dec-ffn','dec-an3','out','outp'],
+    note:'只用 Decoder：因果掩码自回归生成，规模即能力。' },
+  { year:2020, name:'GPT-3',
+    paper:'Language Models are Few-Shot Learners (Brown et al.)',
+    contrib:'1750 亿参数，上下文少样本学习（few-shot）',
+    highlights:['dec-input','dec-masked-mha','out','outp'],
+    note:'结构与 GPT-2 相同，靠规模涌现出上下文学习能力——大模型时代的起点。' }
+];
+
+const Timeline = {
+  /** 渲染时间轴列表并绑定点击联动 */
+  render(){
+    const ol = document.getElementById('timeline-list');
+    ol.innerHTML = '';
+    HISTORY.forEach(h => {
+      const li = document.createElement('li');
+      li.className = 'tl-item';
+      li.dataset.year = h.year;
+      li.innerHTML =
+        '<div class="tl-year">' + h.year + (h.primary ?
+          ' <span style="font-size:11px;background:var(--c-accent);color:#fff;' +
+          'border-radius:4px;padding:1px 6px;vertical-align:2px;">核心</span>' : '') + '</div>' +
+        '<div class="tl-name">' + h.name + '</div>' +
+        '<div class="tl-paper">《' + h.paper + '》</div>' +
+        '<div class="tl-contrib">' + h.contrib + '</div>';
+      li.addEventListener('click', () => this.select(h.year));
+      ol.appendChild(li);
+    });
+  },
+  /**
+   * 选中某年份：高亮时间轴项 + 架构图对应模块 + 显示注释。
+   * @param {number} year
+   */
+  select(year){
+    const h = HISTORY.find(x => x.year === year);
+    if(!h) return;
+    document.querySelectorAll('.tl-item').forEach(li =>
+      li.classList.toggle('active', Number(li.dataset.year) === year));
+    ArchitectureRenderer.highlight(h.highlights);
+    const note = document.getElementById('timeline-note');
+    note.innerHTML = '<b>' + h.year + ' · ' + h.name + '</b><br>' + h.note;
+    note.classList.add('show');
+  }
+};
+
+Timeline.render();
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
