@@ -323,8 +323,10 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
           <button data-view="orig" class="on" title="2017 原版 Encoder-Decoder">2017 原版</button>
           <button data-view="dense" title="GPT → LLaMA → Qwen-Dense：现代 Decoder-Only Dense">Decoder-Only·Dense</button>
           <button data-view="moe" title="Switch → Mixtral → DeepSeek-V3 → Qwen3 → Kimi K2">Decoder-Only·MoE</button>
-          <button data-view="attn" title="MHA→MQA→GQA→MLA；FlashAttention→NSA/MoBA→线性→混合">Attention 演进</button>
+          <button data-view="attn" title="MHA→MQA→GQA→MLA；Flash→NSA/MoBA→线性→混合；SWA/YaRN/QK-Norm">Attention 演进</button>
           <button data-view="ssm" title="线性注意力与状态空间：Linear Transformer→RWKV/xLSTM→S4→Mamba→Kimi Linear">线性·SSM</button>
+          <button data-view="gen" title="自回归 vs MTP vs 扩散 LM vs 投机解码">生成范式</button>
+          <button data-view="frontier" title="BLT 字节级 / 记忆层 / TTT·Titans / 深度循环 / 多模态">前沿探索</button>
         </span>
         <button id="moe-demo" class="btn" style="display:none;">🎲 Top-2 路由演示</button>
       </div>
@@ -1321,7 +1323,8 @@ const MODULE_DETAILS = {
     code: "// MoBA：块级门控选 Top-K 块\nconst blockScores = qBlock.matMul(kBlocks.T);\nconst topK = tf.topk(blockScores, k);  // 其余块不计算",
     params: '0~少量门控参数',
     refs: ['DeepSeek-AI 2025 · Native Sparse Attention (NSA)',
-           'Moonshot AI 2025 · MoBA: Mixture of Block Attention for Long-Context LLMs']
+           'Moonshot AI 2025 · MoBA: Mixture of Block Attention for Long-Context LLMs',
+           'DeepSeek-AI 2025 · V3.2-Exp（DSA 稀疏注意力，NSA 工程化）']
   },
   'hybrid': {
     title: '混合架构（少数全注意力 + 多数线性层）',
@@ -1436,6 +1439,183 @@ const MODULE_DETAILS = {
     code: "y = g1*E1(x) + g2*E2(x);  // 其余 E-2 个专家跳过",
     params: '0',
     refs: ['Fedus et al. 2022 · A Review of Sparse Expert Models in Deep Learning']
+  },
+
+  /* ============ Attention 路线 C：长上下文与稳定化 ============ */
+  'swa': {
+    title: '滑动窗口注意力（SWA）与局部/全局交错',
+    desc: '每个位置只看最近 w 个 token：L×L → L×w，推理 Cache 恒为窗口大小。Mistral 首创；Gemma 2/3 用「局部层:全局层 ≈ 5:1」交错——局部层管邻近细节、稀疏的全局层管长程检索。首 token 吸引力现象由 attention sinks（StreamingLLM）解释并利用。',
+    latex: [
+      'A_{ij}=\\text{softmax}\\!\\left(\\frac{q_i k_j^{\\top}}{\\sqrt{d}}\\right),\\quad j\\in(i-w,\\,i]',
+      '\\text{Cache}: O(L)\\rightarrow O(w),\\quad \\text{层配比 局部:全局}=5{:}1\\ \\text{(Gemma 3)}'
+    ],
+    shapes: ['注意力矩阵 [L,L] → 带状 [L,w]','KV Cache 恒定 w'],
+    code: "const start = Math.max(0, t - W);\nconst s = q[t].matMul(K.slice([start, t-start+W]), false, true);\n// 仅窗口内 softmax，窗口外不计算",
+    params: '0',
+    refs: ['Jiang et al. 2023 · Mistral 7B', 'Riviere et al. 2024 · Gemma 2',
+           'Google 2025 · Gemma 3 Technical Report',
+           'Xiao et al. 2023 · Efficient Streaming Language Models (Attention Sinks)']
+  },
+  'ctx-ext': {
+    title: '上下文扩展：PI → NTK-aware → YaRN',
+    desc: 'RoPE 模型把 4K 训练长度扩到百万级推理的三代方案：PI 线性插值（位置 ÷s）简单有效但高频信息受损；NTK-aware 高频外推、低频内插；YaRN 按波长分频插值 + 注意力温度补偿，10 倍扩展仅需 ~1000 步微调。CodeLlama-100K、Qwen-1M 的底层技术。',
+    latex: [
+      '\\text{PI}: \\theta_m\\rightarrow\\theta_m/s;\\quad \\text{YaRN}: \\text{按波长 } r(\\theta) \\text{ 分频插值} + \\sqrt{1/t}\\ \\text{温度}'
+    ],
+    shapes: ['有效上下文 ×10~250（4K→1M）','微调成本 ~1000 步'],
+    code: "// YaRN：对第 i 个频率按波长混合插值\nconst r = 2*Math.PI/theta[i];          // 波长\nconst scale = r < base ? 1 : Math.max(0, (r-base)/(L_train-base)) * (1-1/s) + 1/s;",
+    params: '0',
+    refs: ['Chen et al. 2023 · Extending Context Window via Position Interpolation',
+           'bloc97 2023 · NTK-Aware Scaled RoPE', 'Peng et al. 2024 · YaRN']
+  },
+  'qknorm': {
+    title: '训练稳定化三件套：QK-Norm · soft-capping · z-loss',
+    desc: '规模越大越容易训崩的主流对策：QK-Norm 对 Q/K 按头做 RMSNorm，防注意力 logits 爆炸（Gemma 3、Chameleon）；logit soft-capping 用 tanh 限幅防输出过自信（Gemma 2）；z-loss 惩罚 softmax 分母漂移（ST-MoE/PaLM）。与 Pre-Norm/RMSNorm 同属「稳定化演进线」。',
+    latex: [
+      '\\hat{q}=\\text{RMSNorm}(q)\\cdot\\sqrt{d_h};\\quad \\hat{\\ell}=c\\cdot\\tanh(\\ell/c)\\ \\text{(soft-cap)}',
+      '\\mathcal{L}_z=\\frac{1}{B}\\sum_b\\big(\\log Z_b\\big)^2\\ \\text{(z-loss)}'
+    ],
+    shapes: ['注意力 logits 方差受控','训练 loss 曲线平滑'],
+    code: "const qn = rmsNorm(Q).mul(Math.sqrt(dh));\nconst kn = rmsNorm(K).mul(Math.sqrt(dh));\nconst logits = softCap(qn.matMul(kn.T), 30); // c=30 tanh 限幅",
+    params: 'QK-Norm：4·dₕ/头',
+    refs: ['Riviere et al. 2024 · Gemma 2', 'Google 2025 · Gemma 3',
+           'Chameleon Team 2024 · Chameleon Mixed-Modal Early-Fusion',
+           'Zoph et al. 2022 · ST-MoE (z-loss)']
+  },
+  'diff': {
+    title: '差分注意力（DIFF Transformer, 2024）',
+    desc: '仿差分放大器：两组独立 softmax 注意力相减，共模噪声（无关 token 的均匀注意力）被抵消——抗幻觉、长上下文鲁棒、还能省一半头数（每组 h/2 头）。65B 规模验证优于同尺寸 Transformer。',
+    latex: [
+      '\\text{DiffAttn}(Q)=\\big(\\text{softmax}(Q_1K_1^{\\top})V_1-\\lambda\\,\\text{softmax}(Q_2K_2^{\\top})V_2\\big),\\ \\lambda\\in(0,1)'
+    ],
+    shapes: ['每组 h/2 头 ×2 组','输出同 MHA 形状'],
+    code: "const A1 = softmax(Q1.matMul(K1.T)); const A2 = softmax(Q2.matMul(K2.T));\nreturn A1.sub(A2.mul(lambda)).matMul(V);",
+    params: '~同 MHA（两组半宽投影）',
+    refs: ['Ye et al. 2024 · Differential Transformer']
+  },
+
+  /* ============ 生成范式 ============ */
+  'autoreg': {
+    title: '自回归下一词预测（NTP）',
+    desc: 'LLM 的第一性原理：因果掩码 + 交叉熵，逐 token 左到右。GPT 系（GPT/Qwen/LLaMA/Kimi/DeepSeek）全部采用；KV Cache 让每步生成 O(L)。理解「为什么自回归赢」= 理解简单目标 + 规模的涌现。',
+    latex: [
+      'P(y)=\\prod_t P(y_t\\mid y_{<t}),\\quad \\mathcal{L}=-\\sum_t\\log P(y_t\\mid y_{<t})'
+    ],
+    shapes: ['logits [B,L,|V|]','每步生成 O(L)（有 Cache）'],
+    code: "const logits = model(yPrev);\nconst loss = tf.losses.softmaxCrossEntropy(oneHot(yNext), logits);",
+    params: '0（目标函数，非参数）',
+    refs: ['Radford et al. 2018/2019 · GPT-1/2', 'Brown et al. 2020 · GPT-3']
+  },
+  'mtp': {
+    title: 'MTP 多 token 预测（DeepSeek-V3）',
+    desc: '在下一词之外再挂 D 个轻量头，一次预测未来 1..D 个 token：训练信号更密集、迫使模型「规划」未来；V3 实测多基准 +1.5~3%。推理时这些头可直接充当投机解码的草稿（EAGLE 思路），一鱼两吃。',
+    latex: [
+      'p_t^{(k)}=\\text{head}_k(h_t),\\quad \\mathcal{L}=\\sum_{k=1}^{D}\\mathbb{E}\\big[-\\log p_{t+k}^{(k)}\\big]'
+    ],
+    shapes: ['共享主干 + D 个投影头','每头 [B,L,|V|]'],
+    code: "for (let k = 1; k <= D; k++)\n  loss += ce(heads[k](h.slice([0, 0], [-1, L-k])), y.slice([0, k]));",
+    params: 'D·d·|V|（辅助头）',
+    refs: ['DeepSeek-AI 2024 · DeepSeek-V3 Technical Report (MTP)',
+           'Gloeckle et al. 2024 · Better & Faster Large Language Models via Multi-token Prediction',
+           'Li et al. 2024 · EAGLE-2']
+  },
+  'diffusion': {
+    title: '扩散语言模型（LLaDA · Mercury · Gemini Diffusion）',
+    desc: '生成 = 从全 [MASK] 出发迭代去噪：每轮并行预测所有位置的一个子集，打破左到右依赖，天然可并行、可回改、可控编辑。LLaDA 8B 首次验证扩散 LM 的规模法则（可比肩 LLaMA3-8B）；Mercury/Gemini Diffusion 主打 5-10× 生成速度。当前短板：变长序列、KV Cache 失效、顶级质量仍属自回归。',
+    latex: [
+      'x_T=\\text{[MASK]}^L\\ \\xrightarrow{\\ p_\\theta(y_t\\mid x_t)\\ }\\ x_0=y\\quad\\text{(逐位置并行去噪)}'
+    ],
+    shapes: ['每步并行预测全部位置','生成速度 5-10× AR'],
+    code: "let x = maskAll(L);\nfor (let step = T; step > 0; step--)\n  x = denoise(x, model, step);   // 每步揭示一部分 token",
+    params: '~同规模 AR 模型',
+    refs: ['Nie et al. 2025 · LLaDA: Large Language Diffusion Models',
+           'Inception Labs 2025 · Mercury Diffusion LLM',
+           'Google DeepMind 2025 · Gemini Diffusion']
+  },
+  'spec': {
+    title: '投机解码（Speculative Decoding · EAGLE）',
+    desc: '推理加速而非新模型：小草稿模型一次猜 k 个 token，大模型一次前向并行验证，拒绝采样保证输出分布与逐 token 生成完全一致——数学无损的 2-4× 提速。EAGLE 系用目标模型特征层 + MTP 式头做草稿，是当前工业默认。',
+    latex: [
+      '\\text{接受率 }\\alpha=\\mathbb{E}\\big[\\min(1,p/q)\\big],\\quad \\text{期望加速}\\approx\\frac{1-\\alpha^{k+1}}{(1-\\alpha)}\\ \\text{倍}'
+    ],
+    shapes: ['草稿 k token → 1 次并行验证','每步产出 ≥1 token'],
+    code: "const draft = smallModel.kTokens(prefix, k);   // 猜 k 个\nconst p = targetModel.probs(prefix.concat(draft));\nconst out = rejectSample(draft, p);            // 无损验证",
+    params: '草稿模型 ~1/10 参数',
+    refs: ['Leviathan et al. 2023 · Fast Inference from Transformers via Speculative Decoding',
+           'Chen et al. 2023 · Accelerating LLM Decoding with Speculative Sampling',
+           'Li et al. 2024 · EAGLE-2']
+  },
+
+  /* ============ 前沿探索 ============ */
+  'blt': {
+    title: 'Byte Latent Transformer（BLT, Meta 2024）',
+    desc: '去掉 BPE 分词器：字节流按「下一个字节的熵」动态聚成 patch——越可预测处 patch 越大，计算量随信息熵分配。等训练算力下鲁棒性优于 Llama 3（抗噪、无 OOV、跨语言公平），代价是长 patch 依赖局部字节小模型。与 MTP/SWA 同属「改输入分配」的效率线。',
+    latex: [
+      '\\text{patch 边界} \\approx \\text{熵率突增处},\\quad \\text{计算} \\propto \\text{信息熵}'
+    ],
+    shapes: ['字节 [B] → 动态 patch [P] → 全局隐状态','P 随内容变化'],
+    code: "const patches = entropyPatcher(bytes, smallModel); // 动态边界\nconst h = globalModel(patches);\nconst bytesOut = localDecoder(h, bytes);",
+    params: 'patcher(小) + 全局模型 + 局部解码器',
+    refs: ['Pagnoni et al. 2024 · Byte Latent Transformer: Patches Scale Better Than Tokens']
+  },
+  'memlayer': {
+    title: '记忆层（Memory Layers at Scale, Meta 2024）',
+    desc: '用可训练的稀疏键值记忆（百万级 embedding，product-key 检索 top-k）替换部分 FFN：事实性问答大幅提升而算力开销很小——「知识存记忆、推理靠注意力」的分工假说的工程验证。128M 记忆在 1.3B 模型上 trivia 性能 +100%+。',
+    latex: [
+      'y=\\textstyle\\sum_{i\\in\\text{topk}(qK)} v_i\\quad\\text{(product-key 量化检索)}'
+    ],
+    shapes: ['查询 [d] → top-k 记忆槽','稀疏激活 ~k/百万'],
+    code: "const keys1 = q.matMul(PK1); keys2 = q.matMul(PK2);\nconst topk = topkProduct(keys1, keys2, k);   // 分解检索\nconst y = V.gather(topk).mean(0);",
+    params: '记忆表 1M~1B×d（稀疏访问）',
+    refs: ['Berges et al. 2024 · Memory Layers at Scale (Meta)']
+  },
+  'ttt': {
+    title: 'TTT 层：测试时训练（2024）',
+    desc: '把 RNN 的「隐藏状态」替换为一个可在线学习的神经网络：每个 token 到来时对隐模型做一步梯度下降，输出 = 更新后模型的前向。序列建模即测试时训练——状态容量从固定向量升级为整个网络。',
+    latex: [
+      'W_t=W_{t-1}-\\eta\\,\\nabla\\,\\ell\\big(W_{t-1};x_t\\big),\\quad y_t=f\\big(W_t;x_t\\big)'
+    ],
+    shapes: ['状态 = 权重 W [参数量级]','每 token 一步 SGD'],
+    code: "for (const x_t of xs) {\n  const g = grad(w => reconLoss(w, x_t));   // 自监督\n  W = W.sub(g.mul(eta));                    // 状态更新\n  y_t = f(W, x_t);\n}",
+    params: '隐模型 ~MLP 级',
+    refs: ['Sun et al. 2024 · Learning to (Learn at Test Time): RNNs with Expressive Hidden States']
+  },
+  'titans': {
+    title: 'Titans：测试时神经记忆（Google 2025）',
+    desc: '「惊讶度」驱动记忆：与当前记忆预测不符的信息才写入长期神经记忆模块（MLP 级、可扩展到千万级上下文），配合短期注意力与持久记忆三部分。是 TTT/Memorizing Transformer 一线的工程化代表：记忆在测试时继续学习。',
+    latex: [
+      'M_t=M_{t-1}-\\theta_t\\,\\nabla\\,\\ell\\big(M_{t-1};x_t\\big)\\quad\\text{(surprise = 梯度大小)}'
+    ],
+    shapes: ['长期记忆 [d,d] 级','上下文 2M→10M+'],
+    code: "const surprise = grad(M => reconLoss(M, x_t));\nM = M.mul(forgetGate).sub(surprise.mul(theta));\ny = attn(x_short) + M.query(q_t);",
+    params: '记忆模块 ~MLP',
+    refs: ['Behrouz et al. 2025 · Titans: Learning to Memorize at Test Time',
+           'Wu et al. 2022 · Memorizing Transformers']
+  },
+  'looped': {
+    title: '深度循环 / 潜空间推理（Universal Transformer → 2025）',
+    desc: '同一组层反复迭代、深度按问题难度自适应：简单问题少循环、难题多「想」几轮——把测试时计算从输出 token 转移到潜空间递归。2018 年的 Universal Transformer 在 2025 以 latent reasoning 模型（如 Huginnet）回潮，与 o1 式长思维链互补。',
+    latex: [
+      'h^{(k+1)}=\\text{Block}\\big(h^{(k)}\\big),\\quad K\\ \\text{按难度自适应（AdaTape/ACT）}'
+    ],
+    shapes: ['参数量不变','有效深度 K×N'],
+    code: "let h = embed(x);\nfor (let k = 0; k < adaptiveSteps(difficulty); k++)\n  h = block(h);   // 权重共享的递归深度",
+    params: 'N 层参数（共享复用 K 次）',
+    refs: ['Dehghani et al. 2018 · Universal Transformers',
+           'Geiping et al. 2025 · Reasoning by Latent Space (Huginnet)']
+  },
+  'multimodal': {
+    title: '多模态融合三路线',
+    desc: '①适配器：ViT/Whisper 编码器输出经 projector 接入 LLM（LLaVA、Qwen-VL）——最主流；②早期融合：图文 token 混合统一训练（Chameleon）；③原生全模态：端到端流式输入输出（GPT-4o 系）。共同思想：把一切模态变成 token 序列，交给同一个 Transformer。',
+    latex: [
+      'h=\\text{LLM}\\big(\\big[\\text{Proj}(v_1..v_m);\\;t_1..t_n\\big]\\big)'
+    ],
+    shapes: ['图像 → ViT patch tokens → 投影到 d_model','与文本 token 拼接'],
+    code: "const vis = proj(vitEncoder(image));       // [m, d]\nconst h = llm(tf.concat([vis, textTokens], 1));",
+    params: 'ViT + projector（~LLM 的 5-15%）',
+    refs: ['Liu et al. 2023 · Visual Instruction Tuning (LLaVA)',
+           'Chameleon Team 2024 · Mixed-Modal Early-Fusion Foundation Models',
+           'Bai et al. 2023 · Qwen-VL']
   }
 };
 
@@ -1690,12 +1870,13 @@ const ARCH_VIEW_MOE = {
   ]
 };
 
-/* ---- 视图：Attention 演进（KV 压缩线 + 计算效率线） ---- */
+/* ---- 视图：Attention 演进（KV 压缩 + 计算效率 + 长上下文/稳定化） ---- */
 const ARCH_VIEW_ATTN = {
   nodeW: 160,
   colTitles: [
     { x:370, y:90,  text:'路线 A · KV Cache 压缩（推理显存/带宽）' },
-    { x:370, y:300, text:'路线 B · 计算与访存效率（长上下文）' }
+    { x:370, y:300, text:'路线 B · 计算与访存效率（长上下文）' },
+    { x:370, y:510, text:'路线 C · 上下文扩展与训练稳定化' }
   ],
   nodes: [
     { id:'mha-ev', x:20, y:120, label:'MHA 多头注意力', sub:'2017 · h 组独立 KV', detail:'mha-ev',
@@ -1713,7 +1894,15 @@ const ARCH_VIEW_ATTN = {
     { id:'linear', x:380, y:330, label:'线性注意力', sub:'2020→25 · 核化 O(Ld²)', detail:'linear',
       tip:'φ(Q)(φ(K)ᵀV)：与序列长度线性，见「线性·SSM」视图' },
     { id:'hybrid', x:560, y:330, label:'混合架构', sub:'Jamba · Griffin · KDA', detail:'hybrid',
-      tip:'少数全注意力层 + 多数线性层按比例混搭（Kimi Linear 等）' }
+      tip:'少数全注意力层 + 多数线性层按比例混搭（Kimi Linear 等）' },
+    { id:'swa', x:20, y:540, label:'滑动窗口 SWA', sub:'2023 · 局部/全局 5:1 交错', detail:'swa',
+      tip:'Mistral/Gemma：每层只看窗口 w，全局层稀疏布点' },
+    { id:'ctxext', x:200, y:540, label:'上下文扩展', sub:'PI · NTK · YaRN', detail:'ctx-ext',
+      tip:'RoPE 训练长度→百万级推理：按频率插值外推' },
+    { id:'qknorm', x:380, y:540, label:'训练稳定化', sub:'QK-Norm · soft-cap · z-loss', detail:'qknorm',
+      tip:'大模型训练三大稳定器（Gemma 2/3、Chameleon）' },
+    { id:'diff', x:560, y:540, label:'差分注意力', sub:'2024 · 双 softmax 消噪', detail:'diff',
+      tip:'DIFF Transformer：差分放大器思路，抗幻觉' }
   ],
   frames: [],
   edges: [],
@@ -1724,7 +1913,9 @@ const ARCH_VIEW_ATTN = {
     { d:'M 100 162 C 100 290, 60 290, 62 328' },   /* mha-ev ↓ flash */
     { d:'M 180 351 L 200 351' },                   /* flash → sparse */
     { d:'M 360 351 L 380 351' },                   /* sparse → linear */
-    { d:'M 540 351 L 560 351' }                    /* linear → hybrid */
+    { d:'M 540 351 L 560 351' },                   /* linear → hybrid */
+    { d:'M 100 372 L 100 538' },                   /* flash ↓ swa */
+    { d:'M 280 372 L 280 538' }                    /* sparse ↓ ctxext */
   ],
   residuals: []
 };
@@ -1760,6 +1951,63 @@ const ARCH_VIEW_SSM = {
   residuals: []
 };
 
+/* ---- 视图：生成范式（自回归 vs MTP vs 扩散 vs 投机解码） ---- */
+const ARCH_VIEW_GEN = {
+  colTitles: [
+    { x:380, y:26, text:'生成范式：自回归及其挑战者' }
+  ],
+  nodes: [
+    { id:'autoreg', x:282, y:48, label:'自回归 NTP（主流）', sub:'GPT 系 · 逐 token 左到右', detail:'autoreg',
+      tip:'P(y)=∏P(yₜ|y<ₜ)：所有主流 LLM 的训练与生成范式' },
+    { id:'mtp', x:60, y:210, label:'MTP 多 token 预测', sub:'DeepSeek-V3 · 一次预测多步', detail:'mtp',
+      tip:'辅助头密集训练信号；推理时可当投机草稿' },
+    { id:'spec', x:504, y:210, label:'投机解码', sub:'草稿模型 + 并行验证（EAGLE）', detail:'spec',
+      tip:'数学无损的 2-4× 解码加速' },
+    { id:'diffusion', x:282, y:380, label:'扩散语言模型', sub:'LLaDA · Mercury 并行去噪', detail:'diffusion',
+      tip:'从全掩码迭代去噪：打破左到右依赖' }
+  ],
+  frames: [],
+  edges: [],
+  special: [
+    { d:'M 300 90 C 220 130, 180 170, 158 208' },              /* autoreg → mtp */
+    { d:'M 460 90 C 540 130, 580 170, 588 208' },              /* autoreg → spec */
+    { d:'M 256 231 L 504 231', label:'草稿 / 验证', lx:380, ly:224 },
+    { d:'M 380 90 L 380 378',  label:'范式挑战 · 并行去噪', lx:462, ly:300 }
+  ],
+  residuals: []
+};
+
+/* ---- 视图：前沿探索（去分词器 / 记忆 / 测试时计算 / 模态） ---- */
+const ARCH_VIEW_FRONTIER = {
+  colTitles: [
+    { x:178, y:60, text:'去分词器与记忆层' },
+    { x:556, y:60, text:'测试时计算与深度' },
+    { x:380, y:420, text:'模态扩展：一切皆 Token' }
+  ],
+  nodes: [
+    { id:'blt', x:80, y:100, label:'BLT 字节级 LM', sub:'2024 · 熵驱动动态 patch', detail:'blt',
+      tip:'Meta：去 BPE，计算量随信息熵分配' },
+    { id:'memlayer', x:80, y:210, label:'记忆层 Memory', sub:'2024 · 稀疏键值替代 FFN', detail:'memlayer',
+      tip:'知识存记忆、推理靠注意力；事实性大幅提升' },
+    { id:'looped', x:458, y:100, label:'深度循环 / 潜推理', sub:'2018→25 · 递归深度自适应', detail:'looped',
+      tip:'Universal Transformer 回潮：难题多转几圈' },
+    { id:'ttt', x:458, y:210, label:'TTT 层', sub:'2024 · 隐藏状态=在线学习器', detail:'ttt',
+      tip:'序列建模即测试时训练' },
+    { id:'titans', x:269, y:330, label:'Titans 神经记忆', sub:'2025 · 惊讶度驱动 · 千万级上下文', detail:'titans',
+      tip:'Google：长期记忆与短期注意力分工' },
+    { id:'multimodal', x:269, y:440, label:'多模态融合', sub:'LLaVA · Chameleon · 原生 Omni', detail:'multimodal',
+      tip:'视觉/音频统一成 token 进 Transformer' }
+  ],
+  frames: [],
+  edges: [
+    ['ttt','titans']
+  ],
+  special: [
+    { d:'M 178 252 C 178 300, 300 300, 340 328' }   /* memlayer → titans */
+  ],
+  residuals: []
+};
+
 /** 视图注册表：id → 布局（orig 复用模块8 的常量） */
 const ARCH_VIEWS = {
   pre:   ARCH_VIEW_PRE,
@@ -1769,7 +2017,9 @@ const ARCH_VIEWS = {
   dense: ARCH_VIEW_DENSE,
   moe:   ARCH_VIEW_MOE,
   attn:  ARCH_VIEW_ATTN,
-  ssm:   ARCH_VIEW_SSM
+  ssm:   ARCH_VIEW_SSM,
+  gen:   ARCH_VIEW_GEN,
+  frontier: ARCH_VIEW_FRONTIER
 };
 
 const ArchitectureRenderer = {
@@ -1857,7 +2107,15 @@ const ArchitectureRenderer = {
        .attr('x1', na.x + nw/2).attr('y1', na.y + ARCH_LAYOUT.nodeH)
        .attr('x2', nb.x + nw/2).attr('y2', nb.y - 2);
     });
-    (v.special || []).forEach(e => g.append('path').attr('class','edge').attr('d', e.d));
+    (v.special || []).forEach(e => {
+      g.append('path').attr('class','edge').attr('d', e.d);
+      if(e.label){
+        g.append('text').attr('x',e.lx).attr('y',e.ly)
+         .attr('text-anchor','middle').attr('font-size',11.5)
+         .attr('fill','var(--c-text-dim)')
+         .style('font-family','var(--font-mono)').text(e.label);
+      }
+    });
     (v.residuals || []).forEach(d =>
       g.append('path').attr('class','edge residual').attr('d', d));
   },
@@ -2023,6 +2281,41 @@ const HISTORY = [
     contrib:'开源 Top-2 稀疏 MoE：47B 总参 / 13B 激活',
     highlights:['router','exp1','exp2','exp3','exp4','wsum'],
     note:'MoE 走向主流开源：同等推理成本下质量直逼更大 Dense 模型——此后新旗舰多为 MoE。' },
+  { year:2023, view:'attn', name:'Mistral 7B（SWA）',
+    paper:'Mistral 7B (Jiang et al.)',
+    contrib:'滑动窗口注意力：长文本推理 Cache O(L)→O(w)',
+    highlights:['swa','flash'],
+    note:'GQA+SWA 组合让 7B 小模型也能跑长文；StreamingLLM 的 attention sinks 解释了首 token 的「注意力黑洞」现象。' },
+  { year:2024, view:'frontier', name:'TTT 层 / 记忆层',
+    paper:'Learning to (Learn at Test Time) (Sun et al.) · Memory Layers at Scale (Meta)',
+    contrib:'隐藏状态=在线学习器；稀疏键值记忆替换 FFN',
+    highlights:['ttt','memlayer'],
+    note:'两条「记忆」路线同时起步：TTT 把状态变成可学习的网络，Memory Layers 把事实知识外置成可检索参数。' },
+  { year:2024, view:'frontier', name:'BLT 字节级 LM',
+    paper:'Byte Latent Transformer: Patches Scale Better Than Tokens (Meta)',
+    contrib:'熵驱动动态 patch，去 BPE 分词器',
+    highlights:['blt'],
+    note:'计算量随信息熵分配：越难预测的字节花越多算力；等算力下鲁棒性超过 Llama 3——「分词器是否必要」的正面挑战。' },
+  { year:2024, view:'gen', name:'MTP 多 token 预测',
+    paper:'DeepSeek-V3 Technical Report (DeepSeek-AI)',
+    contrib:'辅助头一次预测多步：训练信号更密 + 投机草稿',
+    highlights:['autoreg','mtp'],
+    note:'多基准 +1.5~3%；推理时 MTP 头直接当 EAGLE 式草稿模型——训练目标与推理加速一鱼两吃。' },
+  { year:2025, view:'gen', name:'扩散语言模型',
+    paper:'LLaDA: Large Language Diffusion Models · Mercury / Gemini Diffusion (Inception Labs)',
+    contrib:'并行去噪生成，正面挑战自回归范式',
+    highlights:['diffusion','autoreg','spec'],
+    note:'LLaDA 8B 首次验证扩散 LM 规模法则；Mercury 主打 5-10× 生成速度——2017 年以来生成范式的第一次真正分叉。' },
+  { year:2025, view:'attn', name:'Gemma 3（稳定化）',
+    paper:'Gemma 3 Technical Report (Google)',
+    contrib:'QK-Norm + 门控注意力 + 5:1 局部/全局 + 多模态',
+    highlights:['qknorm','swa'],
+    note:'训练稳定化三件套（QK-Norm/soft-cap/z-loss）成为百B级训练的隐形基石——不改变数学，只保证「训得动」。' },
+  { year:2025, view:'frontier', name:'Titans / 潜空间推理',
+    paper:'Titans: Learning to Memorize at Test Time (Google) · Reasoning by Latent Space (Huginnet)',
+    contrib:'测试时神经记忆；深度循环潜推理',
+    highlights:['titans','looped','ttt'],
+    note:'「思考」从输出 token 转移到架构内部：记忆在测试时继续学习、深度按难度自适应——与 o1 式长思维链互补的两条路。' },
   { year:2024, view:'attn', name:'DeepSeek-V2/V3（MLA）',
     paper:'DeepSeek-V2 / DeepSeek-V3 Technical Report (DeepSeek-AI)',
     contrib:'MLA 潜在压缩 KV Cache 数十倍 + MoE 671B/37B 激活',
