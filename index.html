@@ -398,7 +398,88 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <script>
-/* Task 1 阶段仅含主题切换；后续模块按计划逐任务追加到本 script 中。 */
+/* ============================================================
+   模块0：通用工具函数
+   ============================================================ */
+/** 千分位格式化整数 */
+function fmtNum(n){ return n.toLocaleString('en-US'); }
+/** 张量形状数组 → "[1, 5, 512]" 格式文本 */
+function fmtShape(shapeArr){ return '[' + shapeArr.join(', ') + ']'; }
+
+/* ============================================================
+   模块1：配置管理（spec §5 超参数面板的数据源）
+   ============================================================ */
+const Config = {
+  d_model: 512,       // 隐藏维度（512/256/128）
+  num_heads: 8,       // 注意力头数（8/4/2）
+  num_layers: 6,      // 编码器层数 N（6/3/1）
+  d_ff: 2048,         // 前馈网络中间维度，恒为 4 × d_model（spec 示例 512→2048）
+  dropout_rate: 0.1   // 仅影响展示与导出代码；演示阶段不做训练，前向时恒等
+};
+
+/* ============================================================
+   模块2：参数量统计
+   ============================================================ */
+/**
+ * 闭式公式计算当前配置的参数量（各线性层含偏置）：
+ *   Embedding:            V × d_model
+ *   每层 Encoder/Decoder: MHA 4·(d²+d)
+ *                       + FFN (2·d·f + f + d)
+ *                       + LayerNorm×2 (4·d)
+ *   输出投影（Decoder 演示用）: V×d + V
+ * @param {{d_model:number,d_ff:number,num_layers:number}} cfg 当前配置
+ * @param {number} vocabSize 词表大小 V
+ * @returns {{embedding:number,perLayer:number,encoderTotal:number,outputProj:number,total:number}}
+ */
+function countParams(cfg, vocabSize){
+  const { d_model: d, d_ff: f, num_layers: L } = cfg;
+  const perLayer = 4*(d*d + d) + (2*d*f + f + d) + 4*d;
+  return {
+    embedding:    vocabSize * d,
+    perLayer,
+    encoderTotal: L * perLayer,
+    outputProj:   vocabSize * d + vocabSize,
+    total:        vocabSize * d + L * perLayer
+  };
+}
+/* 占位守卫：T3 接入真实词表后由 Vocab.length 提供词表大小 */
+const __VOCAB_PLACEHOLDER__ = 40;
+
+/** 右栏「参数量估算」摘要渲染（T3 前用占位词表大小 40） */
+function renderParamSummary(){
+  const V = (window.Vocab && window.Vocab.length) || __VOCAB_PLACEHOLDER__;
+  const p = countParams(Config, V);
+  document.getElementById('param-summary').innerHTML =
+    '<b style="color:var(--c-primary);">参数量估算</b>' +
+    ' <span style="color:var(--c-text-dim);">(V=' + V + ', d=' + Config.d_model +
+    ', h=' + Config.num_heads + ', N=' + Config.num_layers + ')</span><br>' +
+    'Embedding：' + fmtNum(p.embedding) + '<br>' +
+    '每层 Encoder：' + fmtNum(p.perLayer) + '<br>' +
+    'Encoder 总计（' + Config.num_layers + ' 层）：<b>' + fmtNum(p.encoderTotal) + '</b>';
+}
+
+/* ============================================================
+   模块14（接线部分）：超参数面板事件绑定
+   ============================================================ */
+function bindHyperPanel(){
+  const map = {
+    'hp-d-model':'d_model', 'hp-num-heads':'num_heads',
+    'hp-num-layers':'num_layers', 'hp-dropout':'dropout_rate'
+  };
+  for(const [id,key] of Object.entries(map)){
+    document.getElementById(id).addEventListener('change', e => {
+      const v = Number(e.target.value);
+      Config[key] = v;
+      if(key === 'd_model') Config.d_ff = 4 * v;
+      /* 广播配置变化：架构图/参数统计/引擎在各自模块中监听刷新 */
+      window.dispatchEvent(new CustomEvent('config-changed'));
+    });
+  }
+  window.addEventListener('config-changed', renderParamSummary);
+}
+bindHyperPanel();
+renderParamSummary();
+
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
   const saved=localStorage.getItem('theme');
