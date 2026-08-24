@@ -3550,6 +3550,87 @@ const MoEDemo = {
       if(row !== log.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
     });
     log.lastElementChild.scrollIntoView({ block:'nearest' });
+  },
+
+  /** MoE 视图：预填充后逐词生成（每步含真实 Router 门控） */
+  runGenerate(){
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'moe') ArchitectureRenderer.setView('moe');
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+
+    const tokens = tokenizer.tokenize(text);
+    const ids = toIds(tokens);
+    ensureModern(modernModel.moe);
+    const E = modernModel.moe.nExperts;
+    const steps = [{ kind: 'note', label: '演示说明',
+      html: '⚠️ 权重随机初始化——逐词生成的每一步都经过真实 Router Top-2 路由' +
+            '（激活参数 ≈ 2/' + E + '）；每步整段重算，未用 KV Cache。' }];
+    const data = [];
+    let prefix = ids.slice();
+    const genToks = [];
+    for(let s = 0; s < 4; s++){
+      const t0 = performance.now();
+      const collect = {};
+      const r = modernModel.moe.forward(prefix, collect);
+      const ms = +(performance.now() - t0).toFixed(1);
+      const { top5, next } = top5Of(r.probs[r.probs.length - 1]);
+      data.push({ prefix: tokens.concat(genToks), top5,
+                  chosen: window.Vocab[next],
+                  p: r.probs[r.probs.length - 1][next], ms,
+                  attn: collect.attn, gates: collect.layers.map(l => l.gates) });
+      steps.push({ kind: 'gen', di: data.length - 1, mod: 'lm-head',
+        label: '生成第 ' + (s + 1) + ' 步',
+        note: '前缀 ' + (prefix.length + 1) + ' tokens → 选中「' +
+              window.Vocab[next] + '」' });
+      prefix = prefix.concat([next]);
+      genToks.push(window.Vocab[next]);
+      if(next === window.Vocab.indexOf('<eos>')) break;
+    }
+    steps.push({ kind: 'end', tokens: genToks, mod: 'lm-head', label: '生成结束' });
+    this._genData = data;
+
+    StepPlayer.arm(steps, (st) => this._applyGen(st),
+      () => ArchitectureRenderer.clearHighlight());
+    StepPlayer.startPaused();
+  },
+
+  _applyGen(s){
+    const log = document.getElementById('step-log');
+    if(s.kind === 'note'){
+      ArchitectureRenderer.highlight(['tok']);
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-note">' + s.html + '</span></li>');
+    }else if(s.kind === 'gen'){
+      const d = this._genData[s.di];
+      AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self' });
+      ArchitectureRenderer.highlight(['lnf']);
+      /* 汇总本步专家负载 */
+      const load = [0, 0, 0, 0];
+      d.gates.forEach(gates => gates.forEach(g => {
+        const order = [...g.keys()].sort((a, b) => g[b] - g[a]).slice(0, 2);
+        order.forEach(e => load[e]++);
+      }));
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current"><span class="log-step">' + s.label + '</span>' +
+        TopKChart.render(d.top5) +
+        '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        ' · ' + d.ms + ' ms · 专家负载 ' +
+        load.map((v, i) => 'E' + (i + 1) + '×' + v).join(' · ') + '</span></li>');
+    }else if(s.kind === 'end'){
+      ArchitectureRenderer.highlight(['lnf']);
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-step">生成结束：</span>' +
+        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+          : '（未产生 token）') + '</li>');
+      return;
+    }
+    [...log.children].forEach(row => {
+      if(row !== log.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
+    });
+    log.lastElementChild.scrollIntoView({ block:'nearest' });
   }
 };
 
