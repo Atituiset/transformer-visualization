@@ -2265,6 +2265,12 @@ const ARCH_VIEWS = {
   gen:   ARCH_VIEW_GEN,
   frontier: ARCH_VIEW_FRONTIER
 };
+/** 节点 id → 模块详情键（步骤解释时把 moduleId 映射到 MODULE_DETAILS） */
+const NODE2DETAIL = {};
+Object.values(ARCH_VIEWS).forEach(v => (v.nodes || []).forEach(n => {
+  if(n.detail) NODE2DETAIL[n.id] = n.detail;
+}));
+
 
 const ArchitectureRenderer = {
   /** @type {d3.Selection|null} */
@@ -3034,6 +3040,42 @@ const StepPlayer = {
       [...log.children].forEach((li, i) => { if(i >= idx) li.remove(); });
       this._set(idx);
     }
+  },
+  /** 步骤解释：抽屉展示「这步在做什么」+ 实时张量信息 + 关联模块公式 */
+  explain(idx){
+    const s = this.steps[idx];
+    if(!s) return;
+    const rawKey = s.mod || s.moduleId;
+    const det = rawKey ? MODULE_DETAILS[NODE2DETAIL[rawKey] || rawKey] || null : null;
+    const kindTitle = { tok:'分词', emb:'Embedding 查表', rope:'RoPE 旋转位置编码',
+      attn:'掩码自注意力', res1:'残差连接', res2:'残差连接', ffn:'前馈网络',
+      router:'MoE Router 门控', wsum:'稀疏加权合成', head:'LM Head',
+      gen:'逐词生成', note:'说明', end:'结束' }[s.kind] || '步骤说明';
+    let html = '';
+    if(s.note) html += '<p class="dw-note">' + s.note + '</p>';
+    const live = [];
+    if(s.shape) live.push('形状 <b>' + s.shape + '</b>');
+    if(s.stats) live.push('min ' + s.stats.min + ' · max ' + s.stats.max +
+                          ' · mean ' + s.stats.mean);
+    if(s.ms !== undefined) live.push('耗时 ' + s.ms + ' ms');
+    if(s.tokens) live.push('tokens：' + s.tokens.join(' / '));
+    if(live.length) html += '<div class="dw-live">' + live.join('<br>') + '</div>';
+    if(det){
+      html += '<div class="dp-sec"><span class="dp-label">这一步在做什么</span>' +
+              '<p class="dw-desc">' + det.desc + '</p></div>';
+      html += '<div class="dp-sec"><span class="dp-label">数学公式</span><div class="dp-formula">' +
+              det.latex.map((t, i) =>
+                '<div id="dp-tex-' + i + '" style="margin:6px 0;"></div>').join('') +
+              '</div></div>';
+      html += '<div class="dp-sec"><span class="dp-label">参数量</span>' +
+              '<span class="dp-params">' + det.params + '</span></div>';
+      if(det.refs && det.refs.length)
+        html += '<div class="dp-sec"><span class="dp-label">论文线</span><div class="dp-refs">' +
+                det.refs.map(r => '<span class="dp-ref">📄 ' + r + '</span>').join('') +
+                '</div></div>';
+    }
+    Drawer.open(s.label || kindTitle, html);
+    if(det) DetailPanel.renderTex(det);
   },
   syncPos(){
     const el = document.getElementById('sc-pos');
