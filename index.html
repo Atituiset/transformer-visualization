@@ -326,6 +326,10 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
             <button data-stage="post" class="on">Softmax 后</button>
             <button data-stage="pre">Softmax 前</button>
           </span>
+          <span class="seg" id="kind-seg" style="display:none;">
+            <button data-kind="self" class="on">自注意力</button>
+            <button data-kind="cross">交叉注意力</button>
+          </span>
           <select id="layer-select" style="width:auto;"></select>
         </div>
         <div class="hm-scroll"><div id="attn-heatmap"></div></div>
@@ -1431,8 +1435,29 @@ const AttentionHeatmap = {
   setData(d){
     this.data = d;
     this.head = 0; this.layer = 0;
+    /* 自/交叉切换段控：仅当携带双份数据（解码演示）时显示 */
+    document.getElementById('kind-seg').style.display = d.alt ? '' : 'none';
     this._buildControls();
     this._draw();
+  },
+  /**
+   * 解码演示专用：同时装载自注意力与交叉注意力两套数据，
+   * 通过 #kind-seg 切换显示。
+   * @param {Object} selfData {tokens, layers, kind:'self'}
+   * @param {Object} crossData {tokens, colTokens, layers, kind:'cross'}
+   */
+  setDual(selfData, crossData){
+    selfData.alt = crossData;
+    crossData.alt = selfData;
+    this.setData(selfData);
+  },
+  /** 切换自/交叉视图（alt 互指成对） */
+  setKind(k){
+    if(this.data && this.data.alt && this.data.kind !== k){
+      this.setData(this.data.alt);
+    }
+    document.querySelectorAll('#kind-seg button').forEach(b =>
+      b.classList.toggle('on', b.dataset.kind === k));
   },
   setHead(i){ this.head = i; this._syncControls(); this._draw(); },
   setStage(s){ this.stage = s; this._syncControls(); this._draw(); },
@@ -1686,6 +1711,102 @@ function logRowHTML(s, idx){
 }
 
 /* ============================================================
+   模块12：Decoder 逐词生成演示（设计决策 D8：展示机制而非语言能力）
+   ============================================================ */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const DecoderDemo = {
+  running: false,
+
+  /** 主流程：从 <bos> 开始逐步预测，展示掩码自注意力/交叉注意力/Top-5 分布 */
+  async run(){
+    if(this.running){ this.running = false; return; }
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    this.running = true;
+    DataFlowAnimator.stop();
+    const log = document.getElementById('step-log');
+    log.innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+
+    const tokens = tokenizer.tokenize(text);
+    const unk = window.Vocab.indexOf('<unk>');
+    const srcIds = tokens.map(tk => {
+      const i = window.Vocab.indexOf(tk);
+      return i < 0 ? unk : i;
+    });
+    /* 免责说明（D8） */
+    log.insertAdjacentHTML('beforeend',
+      '<li><span class="log-note">⚠️ 权重为随机初始化，生成文本无语言意义——' +
+      '本演示展示因果掩码、交叉注意力与逐词预测机制。</span></li>');
+    ArchitectureRenderer.highlight(['dec-input', 'dec-embed']);
+    await sleep(500);
+
+    let target = [window.Vocab.indexOf('<bos>')];
+    const maxSteps = Math.min(tokens.length + 3, 8);
+    const generated = ['<bos>'];
+
+    for(let s = 0; s < maxSteps && this.running; s++){
+      const t0 = performance.now();
+      const r = transformer.decodeStep(target, srcIds);
+      const ms = +(performance.now() - t0).toFixed(1);
+      const order = [...r.probs.keys()].sort((a, b) => r.probs[b] - r.probs[a]);
+      const top5 = order.slice(0, 5)
+        .map(i => ({ token: window.Vocab[i], prob: r.probs[i] }));
+      const next = order[0];
+      const nextTok = window.Vocab[next];
+
+      /* 热力图：奇偶步交替展示自/交叉注意力（用户可手动切换） */
+      const targetToks = generated.slice();
+      const showCross = s % 2 === 1;
+      AttentionHeatmap.setDual(
+        { tokens: targetToks,
+          layers: [{ pre: r.selfWeights.pre, post: r.selfWeights.post }],
+          kind: 'self' },
+        { tokens: targetToks, colTokens: tokens,
+          layers: [{ pre: r.crossWeights.pre, post: r.crossWeights.post }],
+          kind: 'cross' });
+      ArchitectureRenderer.highlight(showCross
+        ? ['dec-cross', 'out'] : ['dec-masked-mha', 'out']);
+
+      /* 日志：前缀 → Top-5 分布 → 选中 */
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current">' +
+        '<span class="log-step">第 ' + (s + 1) + ' 步 · 前缀「' +
+        generated.join(' ') + '」</span>' +
+        TopKChart.render(top5) +
+        '<span class="log-meta">选中「<b>' + nextTok + '</b>」 p=' +
+        r.probs[next].toFixed(3) + ' · ' + ms + ' ms' +
+        (showCross ? ' · 热力图=交叉注意力' : ' · 热力图=自注意力(掩码)') +
+        '</span></li>');
+      [...log.children].forEach(li => {
+        if(!li.classList.contains('current')) li.classList.add('done');
+      });
+      log.lastElementChild.scrollIntoView({ block:'nearest' });
+      document.getElementById('tensor-tracker').innerHTML =
+        '<b>Decoder 第 ' + (s + 1) + ' 步</b><br>' +
+        'logits <b>[1, 1, ' + window.Vocab.length + ']</b><br>' +
+        'softmax 后概率和 = 1<br>耗时 ' + ms + ' ms';
+
+      target.push(next);
+      generated.push(nextTok);
+      if(next === window.Vocab.indexOf('<eos>')) break;
+      await sleep(700);
+    }
+    if(this.running){
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-step">生成结束：</span> ' +
+        generated.slice(1).map(t => '<span class="chip">' + t + '</span>').join('') +
+        '</li>');
+    }
+    this.running = false;
+  }
+};
+
+document.getElementById('run-decoder').addEventListener('click',
+  () => DecoderDemo.run());
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
@@ -1727,6 +1848,7 @@ const App = {
   runForward(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
+    DecoderDemo.running = false;   // 打断解码演示
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
     log.innerHTML = '';
@@ -1763,6 +1885,7 @@ const App = {
   },
   /** 超参数或输入变化时重置运行状态 */
   resetRunState(){
+    DecoderDemo.running = false;
     DataFlowAnimator.stop();
     document.getElementById('step-log').innerHTML = '';
     document.getElementById('tensor-tracker').innerHTML =
@@ -1782,6 +1905,10 @@ window.addEventListener('config-changed', () => App.resetRunState());
 document.getElementById('attn-heatmap').innerHTML =
   '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
   '运行「开始前向传播」后，此处显示逐层注意力热力图</div>';
+
+/* 自/交叉注意力切换按钮 */
+document.querySelectorAll('#kind-seg button').forEach(b =>
+  b.addEventListener('click', () => AttentionHeatmap.setKind(b.dataset.kind)));
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
