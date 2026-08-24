@@ -1363,6 +1363,158 @@ const Timeline = {
 Timeline.render();
 
 /* ============================================================
+   模块10：注意力热力图 + Top-K 概率条形图
+   配色（spec）：蓝(低) - 白 - 红(高)；pre 阶段以 0 为中点对称映射
+   ============================================================ */
+const AttentionHeatmap = {
+  /** 当前数据 {tokens, colTokens, layers:[{pre,post}], kind} */
+  data: null,
+  head: 0,          // 0-based
+  stage: 'post',    // 'pre' | 'post'
+  layer: 0,         // 0-based
+  RAMP: ['#2166ac', '#f7f7f7', '#b2182b'],
+
+  /**
+   * 设置数据并重绘（含控件重建）。
+   * @param {{tokens:string[], colTokens?:string[], layers:Array, kind?:string}} d
+   *        layers[i] = {pre:number[][][], post:number[][][]}
+   */
+  setData(d){
+    this.data = d;
+    this.head = 0; this.layer = 0;
+    this._buildControls();
+    this._draw();
+  },
+  setHead(i){ this.head = i; this._syncControls(); this._draw(); },
+  setStage(s){ this.stage = s; this._syncControls(); this._draw(); },
+  setLayer(i){ this.layer = i; this._syncControls(); this._draw(); },
+  clear(){ document.getElementById('attn-heatmap').innerHTML = ''; this.data = null; },
+
+  _buildControls(){
+    const seg = document.getElementById('head-seg');
+    const H = this.data.layers[0].post.length;
+    seg.innerHTML = '';
+    for(let h = 0; h < H; h++){
+      const b = document.createElement('button');
+      b.textContent = h + 1;
+      b.addEventListener('click', () => this.setHead(h));
+      seg.appendChild(b);
+    }
+    const sel = document.getElementById('layer-select');
+    const n = this.data.layers.length;
+    sel.style.display = n > 1 ? '' : 'none';
+    sel.innerHTML = Array.from({length:n}, (_,i) =>
+      '<option value="' + i + '">' + (this.data.kind === 'cross' ? '交叉' : '第') +
+      (n > 1 ? (i + 1) + (this.data.kind === 'cross' ? '' : ' 层') : '') + '</option>').join('');
+    sel.onchange = e => this.setLayer(Number(e.target.value));
+    document.querySelectorAll('#stage-seg button').forEach(b => {
+      b.onclick = () => this.setStage(b.dataset.stage);
+    });
+    this._syncControls();
+  },
+  _syncControls(){
+    document.querySelectorAll('#head-seg button').forEach((b,i) =>
+      b.classList.toggle('on', i === this.head));
+    document.querySelectorAll('#stage-seg button').forEach(b =>
+      b.classList.toggle('on', b.dataset.stage === this.stage));
+    const sel = document.getElementById('layer-select');
+    if(sel.options.length) sel.value = String(this.layer);
+  },
+
+  /** 主绘制：L×L 单元格 + 行列标签 + tooltip + 渐变图例 */
+  _draw(){
+    const host = document.getElementById('attn-heatmap');
+    if(!this.data){ host.innerHTML = ''; return; }
+    const L = this.data.tokens.length;
+    const cols = this.data.colTokens || this.data.tokens;
+    const mat = this.data.layers[this.layer][this.stage][this.head]; // [Lq,Lk]
+    const ramp = d3.interpolateRgbBasis(this.RAMP);
+    /* 值域：post 为概率 [0,1]；pre 以 0 为中点对称（发散语义正确） */
+    let domainMin = 0, domainMax = 1;
+    if(this.stage === 'pre'){
+      let m = 0;
+      mat.forEach(row => row.forEach(v => { m = Math.max(m, Math.abs(v)); }));
+      domainMin = -m; domainMax = m;
+    }
+    const t = v => (v - domainMin) / (domainMax - domainMin || 1);
+    const cell = Math.max(26, Math.min(42, Math.floor(560 / (L + 1))));
+    const mL = 64, mT = 64, mR = 10, mB = 30;
+    const W = mL + L * cell + mR, H = mT + L * cell + mB;
+    const svg = d3.select('#attn-heatmap').html('')
+      .append('svg').attr('width', W).attr('height', H);
+    const tip = document.getElementById('hm-tip');
+    /* 列标签（Key，旋转） */
+    svg.append('g').selectAll('text').data(cols).join('text')
+      .attr('transform', (d,i) =>
+        'translate(' + (mL + i*cell + cell/2 + 4) + ',' + (mT - 8) + ') rotate(-40)')
+      .attr('font-size', 12).attr('fill','var(--c-text-dim)')
+      .style('font-family','var(--font-mono)')
+      .text(d => d.length > 6 ? d.slice(0,6) + '…' : d);
+    /* 行标签（Query） */
+    svg.append('g').selectAll('text').data(this.data.tokens).join('text')
+      .attr('x', mL - 8).attr('y', (d,i) => mT + i*cell + cell/2 + 4)
+      .attr('text-anchor','end').attr('font-size',12)
+      .attr('fill','var(--c-text-dim)').style('font-family','var(--font-mono)')
+      .text(d => d.length > 6 ? d.slice(0,6) + '…' : d);
+    /* 单元格（2px 表面间隙 = 描边同背景色） */
+    const layer = this.layer, stage = this.stage;
+    for(let r = 0; r < L; r++){
+      for(let c = 0; c < L; c++){
+        const v = mat[r][c];
+        svg.append('rect')
+          .attr('x', mL + c*cell + 1).attr('y', mT + r*cell + 1)
+          .attr('width', cell - 2).attr('height', cell - 2).attr('rx', 3)
+          .attr('fill', ramp(Math.max(0, Math.min(1, t(v)))))
+          .on('mousemove', ev => {
+            tip.innerHTML = 'Q="<b>' + this.data.tokens[r] + '</b>" K="<b>' +
+              cols[c] + '</b>"<br>' + (stage === 'post' ? 'P=' : 'score=') +
+              (Math.abs(v) < 1e-4 && stage === 'post' ? v.toExponential(1) : v.toFixed(4));
+            tip.style.opacity = 1;
+            tip.style.left = (ev.clientX + 14) + 'px';
+            tip.style.top  = (ev.clientY + 14) + 'px';
+          })
+          .on('mouseleave', () => { tip.style.opacity = 0; });
+      }
+    }
+    /* 渐变图例 */
+    const lgX = mL, lgY = H - 12, lgW = 120, lgH = 8;
+    const defs = svg.append('defs');
+    const grad = defs.append('linearGradient').attr('id','hm-ramp');
+    for(let s = 0; s <= 10; s++)
+      grad.append('stop').attr('offset', s*10 + '%').attr('stop-color', ramp(s/10));
+    svg.append('rect').attr('x',lgX).attr('y',lgY-lgH-2).attr('width',lgW)
+       .attr('height',lgH).attr('rx',3).attr('fill','url(#hm-ramp)');
+    svg.append('text').attr('x',lgX).attr('y',lgY+8).attr('font-size',10.5)
+       .attr('fill','var(--c-text-dim)').style('font-family','var(--font-mono)')
+       .text(stage === 'post' ? '0' : domainMin.toFixed(2));
+    svg.append('text').attr('x',lgX+lgW).attr('y',lgY+8).attr('font-size',10.5)
+       .attr('text-anchor','end').attr('fill','var(--c-text-dim)')
+       .style('font-family','var(--font-mono)')
+       .text(stage === 'post' ? '1' : domainMax.toFixed(2));
+  }
+};
+
+/* ---------- Top-K 概率条形图（单系列：直接数值标注，无需图例） ---------- */
+const TopKChart = {
+  /**
+   * 渲染水平条形组（用于步骤日志内嵌）。
+   * @param {{token:string,prob:number}[]} items 已排序的 Top-K 项
+   * @returns {string} HTML 片段
+   */
+  render(items){
+    const max = Math.max(...items.map(i => i.prob), 1e-9);
+    return items.map(it => {
+      const pct = (it.prob * 100).toFixed(1);
+      const w = Math.max(2, it.prob / max * 100);
+      return '<div class="bar-row"><span style="min-width:64px;">' + it.token +
+        '</span><span class="bar-track"><span class="bar-fill" style="width:' +
+        w + '%"></span></span><span style="min-width:48px;text-align:right;">' +
+        pct + '%</span></div>';
+    }).join('');
+  }
+};
+
+/* ============================================================
    模块14（接线部分）：超参数面板事件绑定
    ============================================================ */
 function bindHyperPanel(){
