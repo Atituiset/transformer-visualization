@@ -391,6 +391,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
     <div id="tensor-tracker"><b>当前张量</b><br>待运行…</div>
 
+    <button id="export-toggle" class="btn" style="width:100%;margin-top:12px;">📋 导出当前配置的模型代码</button>
     <div id="export-box">
       <div style="display:flex;align-items:center;">
         <button id="copy-export" class="btn" style="font-size:13px;">📋 复制代码</button>
@@ -1802,6 +1803,185 @@ const DecoderDemo = {
 
 document.getElementById('run-decoder').addEventListener('click',
   () => DecoderDemo.run());
+
+/* ============================================================
+   模块13：代码导出（spec §6：当前配置 → tfjs 模型构建代码 + 一键复制）
+   ============================================================ */
+const CodeExporter = {
+  /** 导出面板是否展开 */
+  open: false,
+
+  /**
+   * 生成与当前 Config / 词表对应的 tfjs 构建代码。
+   * 数值全部来自实时配置；MHA 与位置编码以自定义层注释标注，
+   * 并附原始算子参考实现，保证片段自解释。
+   * @returns {string}
+   */
+  generate(){
+    const d = Config.d_model, h = Config.num_heads,
+          f = Config.d_ff, N = Config.num_layers,
+          dr = Config.dropout_rate.toFixed(1), V = window.Vocab.length;
+    return [
+      '// ============================================================',
+      '// Transformer 模型构建代码 —— 由「Transformer 架构交互式可视化」导出',
+      '// 配置：d_model=' + d + ' · num_heads=' + h + ' · num_layers=' + N +
+        ' · d_ff=' + f + ' · dropout_rate=' + dr + ' · |V|=' + V,
+      '// ============================================================',
+      'const D_MODEL = ' + d + ', NUM_HEADS = ' + h + ', NUM_LAYERS = ' + N + ',',
+      '      D_FF = ' + f + ', DROPOUT = ' + dr + ', VOCAB_SIZE = ' + V + ';',
+      '',
+      '/** 正弦位置编码 [1, maxLen, D_MODEL]（自定义层 PositionalEncoding 的核心） */',
+      'function positionalEncoding(maxLen) {',
+      '  const pe = new Float32Array(maxLen * D_MODEL);',
+      '  for (let pos = 0; pos < maxLen; pos++)',
+      '    for (let i = 0; i < D_MODEL; i += 2) {',
+      '      const denom = Math.pow(10000, (2 * i) / D_MODEL);',
+      '      pe[pos * D_MODEL + i]     = Math.sin(pos / denom);  // 偶数维 sin',
+      '      pe[pos * D_MODEL + i + 1] = Math.cos(pos / denom);  // 奇数维 cos',
+      '    }',
+      '  return tf.tensor3d(pe, [1, maxLen, D_MODEL]);',
+      '}',
+      '',
+      '/** 因果掩码：下三角 0 / 其余 -1e9（防止解码器偷看未来） */',
+      'function causalMask(L) {',
+      '  return tf.where(',
+      '    tf.greater(tf.range(0, L).reshape([1, L]), tf.range(0, L).reshape([L, 1])),',
+      '    tf.fill([L, L], -1e9), tf.zeros([L, L])).reshape([1, 1, L, L]);',
+      '}',
+      '',
+      '/** 缩放点积注意力：softmax(QKᵀ/√dk + mask)V */',
+      'function scaledDotProductAttention(Q, K, V, maskAdd = null) {',
+      '  const dk = Q.shape[Q.shape.length - 1];',
+      '  const scores  = tf.matMul(Q, K, false, true).div(Math.sqrt(dk));',
+      '  const weights = tf.softmax(maskAdd ? scores.add(maskAdd) : scores, -1);',
+      '  return tf.matMul(weights, V);                       // [B,H,Lq,dv]',
+      '}',
+      '',
+      '/** 多头注意力参考实现（h=' + h + ' 头并行；封装为 tf.layers.Layer 即为自定义层） */',
+      'function multiHeadAttention(Qin, Kin, Vin, WQ, WK, WV, WO, maskAdd = null) {',
+      '  const split  = t => t.reshape([t.shape[0], t.shape[1], NUM_HEADS, D_MODEL / NUM_HEADS])',
+      '                          .transpose([0, 2, 1, 3]);   // [B,H,L,dh]',
+      '  const ctx    = scaledDotProductAttention(',
+      '                  split(Qin.matMul(WQ)), split(Kin.matMul(WK)),',
+      '                  split(Vin.matMul(WV)), maskAdd);',
+      '  return ctx.transpose([0, 2, 1, 3])                  // 合并多头 → WO',
+      '            .reshape([Qin.shape[0], Qin.shape[1], D_MODEL]).matMul(WO);',
+      '}',
+      '',
+      '/** Encoder 子层：MHA → Add&Norm → FFN(d→' + f + '→d) → Add&Norm（Post-LN） */',
+      'function encoderLayer(x, w) {',
+      '  // 自定义层 MultiHeadSelfAttention(numHeads=NUM_HEADS)：残差旁路见架构图琥珀虚线',
+      '  const attn = multiHeadAttention(x, x, x, w.Q, w.K, w.V, w.O);',
+      '  let h = tf.layers.add().apply([x, attn]);                    // Add',
+      '  h = tf.layers.layerNormalization().apply(h);                 // Norm',
+      '  h = tf.layers.dropout({ rate: DROPOUT }).apply(h);           // 仅训练时生效',
+      '  const skip = h;',
+      '  h = tf.layers.dense({ units: D_FF, activation: \'relu\' }).apply(h); // FFN 扩维',
+      '  h = tf.layers.dense({ units: D_MODEL }).apply(h);            // 投回 d_model',
+      '  return tf.layers.layerNormalization()                        // Add & Norm',
+      '         .apply(tf.layers.add().apply([skip, h]));',
+      '}',
+      '',
+      '/** Decoder 子层：掩码MHA → Add&Norm → 交叉注意力(K/V=编码器记忆) → Add&Norm → FFN → Add&Norm */',
+      'function decoderLayer(y, encOut, wSelf, wCross) {',
+      '  /* ① 掩码自注意力：因果掩码保证第 t 步只依赖 < t 的位置 */',
+      '  const self = multiHeadAttention(y, y, y,',
+      '               wSelf.Q, wSelf.K, wSelf.V, wSelf.O, causalMask(y.shape[1])),',
+      '        h0 = tf.layers.add().apply([y, self]);                 // Add',
+      '',
+      '  /* ② 交叉注意力：Q ← 解码器隐状态；K/V ← 编码器输出（源句信息唯一入口） */',
+      '  let h = tf.layers.layerNormalization().apply(h0);            // Norm',
+      '  const cross = multiHeadAttention(h, encOut, encOut,',
+      '                  wCross.Q, wCross.K, wCross.V, wCross.O);',
+      '  h = tf.layers.add().apply([h, cross]);                       // Add',
+      '  h = tf.layers.layerNormalization().apply(h);                 // Norm',
+      '',
+      '  /* ③ FFN(d → D_FF → d)，逐位置两层 MLP */',
+      '  const skip = h;',
+      '  h = tf.layers.dense({ units: D_FF, activation: \'relu\' }).apply(h);',
+      '  h = tf.layers.dense({ units: D_MODEL }).apply(h);',
+      '  return tf.layers.layerNormalization()                        // Add & Norm',
+      '         .apply(tf.layers.add().apply([skip, h]));',
+      '}',
+      '',
+      '/** 组装：Embedding(+√d·PE) → N×Encoder ∥ N×Decoder → Linear(|V|) */',
+      'function buildTransformer() {',
+      '  const srcIn = tf.input({ shape: [null], dtype: \'int32\' });',
+      '  const tgtIn = tf.input({ shape: [null], dtype: \'int32\' });',
+      '  const embed = ids => tf.layers.embedding({ inputDim: VOCAB_SIZE,',
+      '    outputDim: D_MODEL }).apply(ids).mul(Math.sqrt(D_MODEL));  // × √d_model',
+      '',
+      '  let mem = embed(srcIn);',
+      '  mem = mem.add(positionalEncoding(mem.shape[1]));             // 自定义层 +PE',
+      '  for (let l = 0; l < NUM_LAYERS; l++) mem = encoderLayer(mem, makeW()); // × N 层',
+      '',
+      '  let y = embed(tgtIn);',
+      '  y = y.add(positionalEncoding(y.shape[1]));                   // 自定义层 +PE',
+      '  for (let l = 0; l < NUM_LAYERS; l++)',
+      '    y = decoderLayer(y, mem, makeW(), makeW());                // × N 层',
+      '',
+      '  const logits = tf.layers.dense({ units: VOCAB_SIZE }).apply(y); // 输出投影',
+      '  return tf.model({ inputs: [srcIn, tgtIn], outputs: logits });',
+      '}',
+      '',
+      '/** Glorot 初始化的投影矩阵组（WQ/WK/WV/WO 各 [D_MODEL, D_MODEL]） */',
+      'function makeW() {',
+      '  const g = s => tf.randomNormal(s, 0, Math.sqrt(2 / (s[0] + s[1])));',
+      '  return { Q: g([D_MODEL, D_MODEL]), K: g([D_MODEL, D_MODEL]),',
+      '           V: g([D_MODEL, D_MODEL]), O: g([D_MODEL, D_MODEL]) };',
+      '}'
+    ].join('\n');
+  },
+
+  /** 展开/收起导出面板；展开时按当前配置重新生成 */
+  toggle(){
+    this.open = !this.open;
+    document.getElementById('export-box').classList.toggle('show', this.open);
+    if(this.open){
+      document.getElementById('export-pre').textContent = this.generate();
+      document.getElementById('export-toggle').textContent =
+        '📋 收起模型代码';
+    }else{
+      document.getElementById('export-toggle').textContent =
+        '📋 导出当前配置的模型代码';
+    }
+  },
+
+  /** 配置变化时若面板已展开则同步刷新 */
+  refreshIfOpen(){
+    if(this.open)
+      document.getElementById('export-pre').textContent = this.generate();
+  },
+
+  /**
+   * 复制导出代码：优先 Clipboard API，失败回退 execCommand。
+   * 成功后按钮文案 2 秒显示「✅ 已复制」。
+   */
+  async copy(){
+    const text = document.getElementById('export-pre').textContent;
+    const feedback = document.getElementById('copy-feedback');
+    try{
+      await navigator.clipboard.writeText(text);
+    }catch(e){
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    feedback.textContent = '✅ 已复制';
+    setTimeout(() => { feedback.textContent = ''; }, 2000);
+  }
+};
+
+document.getElementById('export-toggle').addEventListener('click',
+  () => CodeExporter.toggle());
+document.getElementById('copy-export').addEventListener('click',
+  () => CodeExporter.copy());
+window.addEventListener('config-changed', () => CodeExporter.refreshIfOpen());
+
 
 /* ============================================================
    模块14（接线部分）：超参数面板事件绑定
