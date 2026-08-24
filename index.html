@@ -101,7 +101,7 @@ label{display:block;margin:10px 0 4px;color:var(--c-text-dim);font-size:13px;}
 
 /* ---------- 三栏主布局（spec：20% / 55% / 25%） ---------- */
 #layout{
-  flex:1;display:grid;
+  flex:1;display:grid;padding-bottom:76px;
   grid-template-columns:minmax(200px,20%) minmax(0,55%) minmax(250px,25%);
   gap:12px;padding:12px;
   align-items:start;
@@ -271,13 +271,19 @@ html[data-theme="dark"] #drawer-title{color:var(--c-primary-light);}
   color:var(--c-primary);border-radius:6px;padding:2px 8px;
 }
 html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-primary-light);}
-#run-btns{display:flex;gap:8px;margin-top:12px;}
-#run-btns .btn{flex:1;}
+/* 底部居中悬浮控制台：运行组 + 步进组 */
+#dock{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
+  display:flex;gap:10px;align-items:center;z-index:150;
+  background:var(--c-card);border:1px solid var(--c-border);border-radius:999px;
+  padding:8px 14px;box-shadow:0 6px 24px rgba(15,20,50,.22);}
+.dock-group{display:flex;gap:6px;align-items:center;}
+.dock-sep{width:1px;height:22px;background:var(--c-border);}
+#dock .btn{padding:6px 13px;font-size:13.5px;white-space:nowrap;}
+#sc-pos{font-family:var(--font-mono);font-size:12.5px;color:var(--c-text-dim);
+  min-width:54px;text-align:center;}
 #step-log{list-style:none;margin-top:6px;display:flex;flex-direction:column;gap:6px;}
 #log-hint{font-size:11.5px;color:var(--c-text-dim);margin-top:10px;}
-#step-ctl{display:flex;gap:6px;align-items:center;margin-top:12px;}
-#step-ctl .btn{padding:4px 11px;font-size:13px;line-height:1.4;}
-#sc-pos{font-family:var(--font-mono);font-size:12.5px;color:var(--c-text-dim);margin-left:auto;}
+
 #step-log li{
   border:1px solid var(--c-border);border-left:3px solid var(--c-primary-light);
   border-radius:8px;padding:7px 9px;font-size:13px;line-height:1.5;
@@ -430,22 +436,8 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
     <div id="param-summary" style="margin-top:10px;font-size:13px;line-height:1.7;"></div>
 
-    <div id="run-btns">
-      <button id="run-forward" class="btn btn-primary">▶ 开始前向传播</button>
-      <button id="run-decoder" class="btn btn-accent">⏩ Decoder 演示</button>
-    </div>
-
-    <div id="step-ctl">
-      <button id="sc-reset" class="btn" title="回到开始">⏮</button>
-      <button id="sc-prev" class="btn" title="上一步">◀</button>
-      <button id="sc-play" class="btn" title="播放 / 暂停">▶</button>
-      <button id="sc-next" class="btn" title="单步前进">⏭︎</button>
-      <button id="sc-end" class="btn" title="跳到结束">⤓</button>
-      <span id="sc-pos">0 / 0</span>
-    </div>
-
     <ol id="step-log"></ol>
-    <div id="log-hint">💡 点击日志步骤：跳到该步并暂停 · 控制条可播放 / 单步 / 回退</div>
+    <div id="log-hint">💡 点击日志步骤：跳到该步并暂停 · 底部控制台可播放 / 单步 / 回退</div>
 
     <div id="tensor-tracker"><b>当前张量</b><br>待运行…</div>
 
@@ -460,6 +452,23 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   </aside>
 
 </main>
+
+<!-- 底部居中悬浮控制台：运行组（随视图自适应） + 步进组 -->
+<div id="dock">
+  <div class="dock-group" id="dock-run">
+    <button id="run-forward" class="btn btn-primary">▶ 开始前向传播</button>
+    <button id="run-decoder" class="btn btn-accent">⏩ Decoder 演示</button>
+  </div>
+  <div class="dock-sep"></div>
+  <div class="dock-group">
+    <button id="sc-reset" class="btn" title="回到开始">⏮</button>
+    <button id="sc-prev" class="btn" title="上一步">◀</button>
+    <button id="sc-play" class="btn" title="播放 / 暂停">▶</button>
+    <button id="sc-next" class="btn" title="单步前进">⏭︎</button>
+    <button id="sc-end" class="btn" title="跳到结束">⤓</button>
+    <span id="sc-pos">0 / 0</span>
+  </div>
+</div>
 
 <!-- 解释抽屉：点击结构图模块 / 日志步骤时滑出（默认隐藏） -->
 <div id="drawer-mask"></div>
