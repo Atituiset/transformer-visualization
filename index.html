@@ -182,7 +182,6 @@ html[data-theme="dark"] .seg button.on{color:#0f1420;}
 .arch-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
 .arch-toolbar h3{margin:0;}
 #view-seg button{font-size:12.5px;padding:4px 9px;}
-#moe-demo{font-size:12.5px;padding:4px 10px;}
 .dp-refs{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px;}
 .dp-ref{font-size:11.5px;font-family:var(--font-mono);color:var(--c-text-dim);
   border:1px dashed var(--c-border);border-radius:6px;padding:2px 7px;}
@@ -251,12 +250,14 @@ html[data-theme="dark"] #detail-panel .dp-title{color:var(--c-primary-light);}
 html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-primary-light);}
 #run-btns{display:flex;gap:8px;margin-top:12px;}
 #run-btns .btn{flex:1;}
-#step-log{list-style:none;margin-top:12px;display:flex;flex-direction:column;gap:6px;}
+#step-log{list-style:none;margin-top:6px;display:flex;flex-direction:column;gap:6px;}
+#log-hint{font-size:11.5px;color:var(--c-text-dim);margin-top:10px;}
 #step-log li{
   border:1px solid var(--c-border);border-left:3px solid var(--c-primary-light);
   border-radius:8px;padding:7px 9px;font-size:13px;line-height:1.5;
-  animation:logIn .25s ease both;
+  animation:logIn .25s ease both;cursor:pointer;
 }
+#step-log li:hover{background:rgba(255,111,0,.06);border-left-color:var(--c-accent);}
 @keyframes logIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
 #step-log li.current{border-left-color:var(--c-accent);background:rgba(255,111,0,.07);}
 #step-log li.done{opacity:.75;}
@@ -328,7 +329,6 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
           <button data-view="gen" title="自回归 vs MTP vs 扩散 LM vs 投机解码">生成范式</button>
           <button data-view="frontier" title="BLT 字节级 / 记忆层 / TTT·Titans / 深度循环 / 多模态">前沿探索</button>
         </span>
-        <button id="moe-demo" class="btn" style="display:none;">🎲 Top-2 路由演示</button>
       </div>
       <svg id="arch-svg" role="img" aria-label="Transformer 架构演进结构图"></svg>
       <div class="arch-tooltip" id="arch-tooltip"></div>
@@ -410,6 +410,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     </div>
 
     <ol id="step-log"></ol>
+    <div id="log-hint">💡 点击日志任意步骤，可从该步自动回放</div>
 
     <div id="tensor-tracker"><b>当前张量</b><br>待运行…</div>
 
@@ -1006,6 +1007,174 @@ class Transformer {
 const transformer = new Transformer();
 transformer.build();
 window.addEventListener('config-changed', () => transformer.build());
+
+/* ============================================================
+   模块6b：现代 Decoder-Only 引擎（RMSNorm + RoPE + GQA + SwiGLU/MoE）
+   供 Dense / MoE 视图真实前向演示；权重随机初始化（设计决策 D8）
+   ============================================================ */
+/** SiLU/Swish：x·σ(x)（tfjs 4.x 无顶层 silu 算子，手写实现） */
+const swish = t => t.mul(tf.sigmoid(t));
+/** RMSNorm：x/√(mean x²+ε) · g（无均值中心化） */
+function rmsNorm(x, g){
+  return tf.tidy(() => {
+    const ms = tf.mean(tf.square(x), -1, true);
+    return x.div(ms.add(1e-6).sqrt()).mul(g);
+  });
+}
+/** RoPE：成对维度旋转。x [B,H,L,dh]，offset 供生成续接（本演示整段重算恒为 0） */
+function ropeApply(x){
+  return tf.tidy(() => {
+    const dh = x.shape[3], L = x.shape[2], half = dh / 2;
+    const inv = tf.range(0, half).toFloat()
+      .mul(-Math.log(10000) * 2 / dh).exp().reshape([1, 1, 1, half]);
+    const ang = tf.range(0, L).toFloat()
+      .reshape([1, 1, L, 1]).mul(inv);
+    const cos = ang.cos(), sin = ang.sin();
+    const a = x.slice([0, 0, 0, 0], [-1, -1, -1, half]);
+    const b = x.slice([0, 0, 0, half], [-1, -1, -1, half]);
+    return tf.concat([a.mul(cos).sub(b.mul(sin)), a.mul(sin).add(b.mul(cos))], -1);
+  });
+}
+/**
+ * 现代 Decoder-Only 模型。useMoE=false：SwiGLU FFN（Dense 视图）；
+ * true：Router Top-2 + 4 个细粒度专家（MoE 视图，单专家 d_ff 减半量级）。
+ * LM Head 与 Embedding 权重绑定（logits = h·Eᵀ）。
+ */
+class ModernDecoder {
+  constructor(useMoE){
+    this.useMoE = useMoE;
+    this.nExperts = 4;
+    this._built = false;
+  }
+  build(){
+    if(this._built) this.disposeAll();
+    const d = Config.d_model, h = Config.num_heads,
+          N = Config.num_layers, V = window.Vocab.length;
+    this.d = d; this.h = h; this.N = N; this.V = V;
+    this.dh = d / h;
+    this.hkv = Math.max(1, Math.round(h / 4));          // GQA 分组 4:1
+    this.dff = Math.floor(8 / 3 * d);                   // SwiGLU 惯例 ≈ ⅔·4d
+    this.embed = toVar(glorotInit([V, d]));
+    this.gF = toVar(tf.ones([d]));                      // Final RMSNorm
+    this.layers = [];
+    for(let i = 0; i < N; i++){
+      const L = {
+        g1: toVar(tf.ones([d])), g2: toVar(tf.ones([d])),
+        WQ: toVar(glorotInit([d, h * this.dh])),
+        WK: toVar(glorotInit([d, this.hkv * this.dh])),  // KV 头少于 Q 头
+        WV: toVar(glorotInit([d, this.hkv * this.dh])),
+        WO: toVar(glorotInit([h * this.dh, d]))
+      };
+      if(this.useMoE){
+        L.Wr = toVar(glorotInit([d, this.nExperts]));    // Router
+        L.ex = [];
+        const dffE = 512;                                // 细粒度专家：单专家更小
+        for(let e = 0; e < this.nExperts; e++)
+          L.ex.push({ Wg: toVar(glorotInit([d, dffE])),
+                      Wu: toVar(glorotInit([d, dffE])),
+                      Wd: toVar(glorotInit([dffE, d])) });
+      }else{
+        L.Wswg = toVar(glorotInit([d, this.dff]));
+        L.Wswu = toVar(glorotInit([d, this.dff]));
+        L.Wswd = toVar(glorotInit([this.dff, d]));
+      }
+      this.layers.push(L);
+    }
+    this._built = true;
+  }
+  disposeAll(){
+    if(!this._built) return;
+    for(const L of this.layers){
+      [L.g1, L.g2, L.WQ, L.WK, L.WV, L.WO].forEach(v => v.dispose());
+      if(L.ex){ L.Wr.dispose();
+        L.ex.forEach(e => [e.Wg, e.Wu, e.Wd].forEach(v => v.dispose())); }
+      else [L.Wswg, L.Wswu, L.Wswd].forEach(v => v.dispose());
+    }
+    this.embed.dispose(); this.gF.dispose();
+    this._built = false;
+  }
+  /**
+   * 整段前向（teacher-forcing）：返回纯数组快照，不逃逸张量。
+   * @param {number[]} tokenIds
+   * @param {Object|null} collect 快照收集器 {emb, attn:[{pre,post}], layers:[...], final}
+   * @returns {{logits:number[][], probs:number[][]}} [L,V]
+   */
+  forward(tokenIds, collect = null){
+    return tf.tidy(() => {
+      const Ls = tokenIds.length, d = this.d;
+      const ids = tf.tensor1d(tokenIds, 'int32');
+      let x = tf.gather(this.embed, ids).reshape([1, Ls, d]); // LLaMA 式：不乘 √d
+      if(collect) collect.emb = x.arraySync();
+      const mask = causalMask(Ls);
+      if(collect){ collect.attn = []; collect.layers = []; }
+      for(let i = 0; i < this.layers.length; i++){
+        const W = this.layers[i];
+        const snap = collect ? {} : null;
+        /* Pre-Norm + RoPE + GQA 掩码自注意力 */
+        let h = rmsNorm(x, W.g1);
+        if(snap) snap.afterRms1 = h.arraySync();
+        const q = ropeApply(h.matMul(W.WQ).reshape([1, Ls, this.h, this.dh])
+                                 .transpose([0, 2, 1, 3]));
+        const k = ropeApply(h.matMul(W.WK).reshape([1, Ls, this.hkv, this.dh])
+                                 .transpose([0, 2, 1, 3]));
+        const v = h.matMul(W.WV).reshape([1, Ls, this.hkv, this.dh])
+                   .transpose([0, 2, 1, 3]);
+        const rep = this.h / this.hkv;
+        const kT = rep > 1 ? k.tile([1, rep, 1, 1]) : k;
+        const vT = rep > 1 ? v.tile([1, rep, 1, 1]) : v;
+        const scores = q.matMul(kT, false, true).div(Math.sqrt(this.dh));
+        const pre = collect ? scores.arraySync()[0] : null;
+        const wgt = tf.softmax(scores.add(mask), -1);
+        const post = collect ? wgt.arraySync()[0] : null;
+        const attnOut = wgt.matMul(vT).transpose([0, 2, 1, 3])
+          .reshape([1, Ls, this.h * this.dh]).matMul(W.WO);
+        if(snap){ snap.attnOut = attnOut.arraySync();
+                  if(collect) collect.attn.push({ pre, post }); }
+        x = x.add(attnOut);                                    // ⊕ 残差
+        if(snap) snap.afterRes1 = x.arraySync();
+        /* Pre-Norm + FFN（SwiGLU 或 MoE Top-2） */
+        h = rmsNorm(x, W.g2);
+        let ffnOut;
+        if(this.useMoE){
+          const gateLogits = h.matMul(W.Wr);                   // [1,L,E]
+          const top = tf.topk(gateLogits, 2);
+          const gates = tf.softmax(top.values, -1);            // [1,L,2]
+          const oh = tf.oneHot(top.indices.reshape([-1]).toInt(), this.nExperts)
+                     .reshape([1, Ls, 2, this.nExperts]);
+          const gateFull = oh.mul(gates.reshape([1, Ls, 2, 1])).sum(2); // [1,L,E]
+          if(snap) snap.gates = gateFull.arraySync()[0];
+          let acc = tf.zeros([1, Ls, d]);
+          W.ex.forEach((E, ei) => {
+            const y = swish(h.matMul(E.Wg)).mul(h.matMul(E.Wu)).matMul(E.Wd);
+            acc = acc.add(y.mul(gateFull.slice([0, 0, ei], [1, Ls, 1])));
+          });
+          ffnOut = acc;      // 注：示意实现全专家计算后按门控合成；真实推理只算被选中专家
+        }else{
+          const mid = swish(h.matMul(W.Wswg)).mul(h.matMul(W.Wswu));
+          if(snap) snap.ffnMid = mid.arraySync();
+          ffnOut = mid.matMul(W.Wswd);
+        }
+        x = x.add(ffnOut);                                     // ⊕ 残差
+        if(snap) snap.afterRes2 = x.arraySync();
+        if(snap) collect.layers.push(snap);
+      }
+      const hf = rmsNorm(x, this.gF);
+      if(collect) collect.final = hf.arraySync();
+      const logits = hf.matMul(this.embed.transpose());        // 权重绑定
+      return {
+        logits: logits.arraySync()[0],
+        probs: tf.softmax(logits, -1).arraySync()[0]
+      };
+    });
+  }
+}
+/* 惰性构建：首次使用对应演示时才建权重；超参变化时已建者重建 */
+const modernModel = { dense: new ModernDecoder(false), moe: new ModernDecoder(true) };
+function ensureModern(m){ if(!m._built) m.build(); }
+window.addEventListener('config-changed', () => {
+  if(modernModel.dense._built) modernModel.dense.build();
+  if(modernModel.moe._built) modernModel.moe.build();
+});
 
 /* ============================================================
    模块7：模块详情注册表 + KaTeX 详情面板
@@ -2058,7 +2227,7 @@ const ArchitectureRenderer = {
     const nw = v.nodeW || ARCH_LAYOUT.nodeW;
     document.querySelectorAll('#view-seg button').forEach(b =>
       b.classList.toggle('on', b.dataset.view === id));
-    document.getElementById('moe-demo').style.display = id === 'moe' ? '' : 'none';
+    updateRunButtons(id);
 
     this.svg = d3.select('#arch-svg')
       .attr('viewBox', '0 0 ' + ARCH_LAYOUT.W + ' ' + ARCH_LAYOUT.H);
@@ -2080,8 +2249,6 @@ const ArchitectureRenderer = {
     this.clearHighlight();
 
     if(!silent){
-      DecoderDemo.running = false;
-      MoERouterDemo.running = false;
       DataFlowAnimator.stop();
       App.resetRunState();
     }
@@ -2713,166 +2880,425 @@ function logRowHTML(s, idx){
 }
 
 /* ============================================================
-   模块12：Decoder 逐词生成演示（设计决策 D8：展示机制而非语言能力）
+   模块12：逐词生成/前向演示统一框架（快照式：先算完 → 再回放）
+   StepPlayer：日志行与步骤一一对应，点击任意行可从该步自动回放
    ============================================================ */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const DecoderDemo = {
-  running: false,
+const StepPlayer = {
+  steps: [], apply: null, onDone: null,
+  /** 绑定步骤序列与单步应用函数（每个演示运行前调用） */
+  arm(steps, apply, onDone){
+    this.steps = steps; this.apply = apply; this.onDone = onDone || null;
+  },
+  /** 从第 idx 行回放：截掉该行及之后，重新播放剩余步骤 */
+  replayFrom(idx){
+    DataFlowAnimator.stop();
+    const log = document.getElementById('step-log');
+    [...log.children].forEach((li, i) => { if(i >= idx) li.remove(); });
+    if(!this.steps.length || idx >= this.steps.length) return;
+    DataFlowAnimator.play(this.steps.slice(idx), {
+      onStep: (s, i) => this.apply(s, idx + i),
+      onDone: () => { if(this.onDone) this.onDone(); }
+    });
+  }
+};
+/* 事件委托：点击日志任意行 → 从该步回放 */
+document.getElementById('step-log').addEventListener('click', e => {
+  const li = e.target.closest('li');
+  if(!li || !li.parentNode) return;
+  const idx = [...li.parentNode.children].indexOf(li);
+  StepPlayer.replayFrom(idx);
+});
 
-  /** 主流程：从 <bos> 开始逐步预测，展示掩码自注意力/交叉注意力/Top-5 分布 */
-  async run(){
-    if(this.running){ this.running = false; return; }
+/** Top-5 概率 → 下一个 token（公共工具） */
+function top5Of(probs){
+  const order = [...probs.keys()].sort((a, b) => probs[b] - probs[a]);
+  return { top5: order.slice(0, 5).map(i => ({ token: window.Vocab[i], prob: probs[i] })),
+           next: order[0] };
+}
+/** OOV → <unk> 的 id 映射 */
+function toIds(tokens){
+  const unk = window.Vocab.indexOf('<unk>');
+  return tokens.map(tk => {
+    const i = window.Vocab.indexOf(tk);
+    return i < 0 ? unk : i;
+  });
+}
+
+/* ============================================================
+   模块12a：Decoder 逐词生成演示（2017 原版，快照式）
+   ============================================================ */
+const DecoderDemo = {
+  /** 从 <bos> 逐步预测：掩码自注意力/交叉注意力热力图 + Top-5 分布 */
+  run(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
-    this.running = true;
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
     log.innerHTML = '';
     ArchitectureRenderer.clearHighlight();
 
     const tokens = tokenizer.tokenize(text);
-    const unk = window.Vocab.indexOf('<unk>');
-    const srcIds = tokens.map(tk => {
-      const i = window.Vocab.indexOf(tk);
-      return i < 0 ? unk : i;
-    });
-    /* 免责说明（D8） */
-    log.insertAdjacentHTML('beforeend',
-      '<li><span class="log-note">⚠️ 权重为随机初始化，生成文本无语言意义——' +
-      '本演示展示因果掩码、交叉注意力与逐词预测机制。</span></li>');
-    ArchitectureRenderer.highlight(['dec-input', 'dec-embed']);
-    await sleep(500);
-
+    const srcIds = toIds(tokens);
+    /* 预计算全部生成步（D8：权重随机，仅展示机制） */
+    const steps = [{ kind: 'note' }];
+    const data = [];
     let target = [window.Vocab.indexOf('<bos>')];
-    const maxSteps = Math.min(tokens.length + 3, 8);
     const generated = ['<bos>'];
-
-    for(let s = 0; s < maxSteps && this.running; s++){
+    const maxSteps = Math.min(tokens.length + 3, 8);
+    for(let s = 0; s < maxSteps; s++){
       const t0 = performance.now();
       const r = transformer.decodeStep(target, srcIds);
       const ms = +(performance.now() - t0).toFixed(1);
-      const order = [...r.probs.keys()].sort((a, b) => r.probs[b] - r.probs[a]);
-      const top5 = order.slice(0, 5)
-        .map(i => ({ token: window.Vocab[i], prob: r.probs[i] }));
-      const next = order[0];
-      const nextTok = window.Vocab[next];
-
-      /* 热力图：奇偶步交替展示自/交叉注意力（用户可手动切换） */
-      const targetToks = generated.slice();
-      const showCross = s % 2 === 1;
-      AttentionHeatmap.setDual(
-        { tokens: targetToks,
-          layers: [{ pre: r.selfWeights.pre, post: r.selfWeights.post }],
-          kind: 'self' },
-        { tokens: targetToks, colTokens: tokens,
-          layers: [{ pre: r.crossWeights.pre, post: r.crossWeights.post }],
-          kind: 'cross' });
-      ArchitectureRenderer.highlight(showCross
-        ? ['dec-cross', 'out'] : ['dec-masked-mha', 'out']);
-
-      /* 日志：前缀 → Top-5 分布 → 选中 */
-      log.insertAdjacentHTML('beforeend',
-        '<li class="current">' +
-        '<span class="log-step">第 ' + (s + 1) + ' 步 · 前缀「' +
-        generated.join(' ') + '」</span>' +
-        TopKChart.render(top5) +
-        '<span class="log-meta">选中「<b>' + nextTok + '</b>」 p=' +
-        r.probs[next].toFixed(3) + ' · ' + ms + ' ms' +
-        (showCross ? ' · 热力图=交叉注意力' : ' · 热力图=自注意力(掩码)') +
-        '</span></li>');
-      [...log.children].forEach(li => {
-        if(!li.classList.contains('current')) li.classList.add('done');
-      });
-      log.lastElementChild.scrollIntoView({ block:'nearest' });
-      document.getElementById('tensor-tracker').innerHTML =
-        '<b>Decoder 第 ' + (s + 1) + ' 步</b><br>' +
-        'logits <b>[1, 1, ' + window.Vocab.length + ']</b><br>' +
-        'softmax 后概率和 = 1<br>耗时 ' + ms + ' ms';
-
+      const { top5, next } = top5Of(r.probs);
+      data.push({ prefix: generated.slice(), top5, chosen: window.Vocab[next],
+                  p: r.probs[next], ms, selfW: r.selfWeights,
+                  crossW: r.crossWeights, showCross: s % 2 === 1 });
+      steps.push({ kind: 'gen', di: data.length - 1 });
       target.push(next);
-      generated.push(nextTok);
+      generated.push(window.Vocab[next]);
       if(next === window.Vocab.indexOf('<eos>')) break;
-      await sleep(700);
     }
-    if(this.running){
-      log.insertAdjacentHTML('beforeend',
-        '<li><span class="log-step">生成结束：</span> ' +
-        generated.slice(1).map(t => '<span class="chip">' + t + '</span>').join('') +
-        '</li>');
-    }
-    this.running = false;
+    steps.push({ kind: 'end', tokens: generated.slice(1) });
+
+    StepPlayer.arm(steps, (s) => {
+      const li = document.getElementById('step-log');
+      if(s.kind === 'note'){
+        li.insertAdjacentHTML('beforeend',
+          '<li><span class="log-note">⚠️ 权重为随机初始化，生成文本无语言意义——' +
+          '本演示展示因果掩码、交叉注意力与逐词预测机制。</span></li>');
+        ArchitectureRenderer.highlight(['dec-input', 'dec-embed']);
+        return;
+      }
+      if(s.kind === 'gen'){
+        const d = data[s.di];
+        AttentionHeatmap.setDual(
+          { tokens: d.prefix,
+            layers: [{ pre: d.selfW.pre, post: d.selfW.post }], kind: 'self' },
+          { tokens: d.prefix, colTokens: tokens,
+            layers: [{ pre: d.crossW.pre, post: d.crossW.post }], kind: 'cross' });
+        ArchitectureRenderer.highlight(d.showCross
+          ? ['dec-cross', 'out'] : ['dec-masked-mha', 'out']);
+        li.insertAdjacentHTML('beforeend',
+          '<li class="current"><span class="log-step">第 ' + (s.di + 1) +
+          ' 步 · 前缀「' + d.prefix.join(' ') + '」</span>' +
+          TopKChart.render(d.top5) +
+          '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+          ' · ' + d.ms + ' ms' +
+          (d.showCross ? ' · 热力图=交叉注意力' : ' · 热力图=自注意力(掩码)') +
+          '</span></li>');
+      }else if(s.kind === 'end'){
+        li.insertAdjacentHTML('beforeend',
+          '<li><span class="log-step">生成结束：</span>' +
+          (s.tokens.length
+            ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+            : '（未产生 token）') + '</li>');
+        ArchitectureRenderer.clearHighlight();
+        return;
+      }
+      const rows = li.children;
+      [...rows].forEach(row => {
+        if(row !== li.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
+      });
+      li.lastElementChild.scrollIntoView({ block:'nearest' });
+      const d = s.kind === 'gen' ? data[s.di] : null;
+      document.getElementById('tensor-tracker').innerHTML = d
+        ? '<b>Decoder 第 ' + (s.di + 1) + ' 步</b><br>logits <b>[1, 1, ' +
+          window.Vocab.length + ']</b><br>softmax 后概率和 = 1<br>耗时 ' + d.ms + ' ms'
+        : document.getElementById('tensor-tracker').innerHTML;
+    }, () => ArchitectureRenderer.clearHighlight());
+    DataFlowAnimator.play(steps, {
+      onStep: (s, i) => StepPlayer.apply(s, i),
+      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
+    });
   }
 };
 
-document.getElementById('run-decoder').addEventListener('click',
-  () => DecoderDemo.run());
+/* ============================================================
+   模块12b：Dense / MoE 真实前向演示（现代引擎，快照式）
+   ============================================================ */
+const DenseDemo = {
+  /** Dense 视图：teacher-forcing 整段前向，逐层 RMSNorm/RoPE/GQA/SwiGLU */
+  runForward(){
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'dense') ArchitectureRenderer.setView('dense');
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+
+    const tokens = tokenizer.tokenize(text);
+    const ids = toIds(tokens);
+    ensureModern(modernModel.dense);
+    const collect = {};
+    const t0 = performance.now();
+    const r = modernModel.dense.forward(ids, collect);
+    const totalMs = +(performance.now() - t0).toFixed(1);
+    const d = Config.d_model, dff = modernModel.dense.dff,
+          hkv = modernModel.dense.hkv, h = modernModel.dense.h;
+
+    const steps = [
+      { kind: 'tok', tokens },
+      { kind: 'emb', shape: fmtShape(shapeOf(collect.emb)), stats: statsOf(collect.emb),
+        note: 'LLaMA 式：查表后不乘 √d_model' },
+      { kind: 'rope', note: 'RoPE 在每层注意力内旋转 Q/K（范数不变）' }
+    ];
+    collect.layers.forEach((s, i) => {
+      steps.push({ kind: 'attn', i, shape: fmtShape(shapeOf(s.attnOut)),
+        stats: statsOf(s.attnOut), note: 'RMSNorm→RoPE→GQA ' + h + 'Q/' + hkv +
+        'KV · 注意力已同步热力图' });
+      steps.push({ kind: 'res1', i, shape: fmtShape(shapeOf(s.afterRes1)),
+        stats: statsOf(s.afterRes1), note: '⊕ 残差（Pre-Norm 旁路）' });
+      steps.push({ kind: 'ffn', i, shape: fmtShape(shapeOf(s.ffnMid)),
+        stats: statsOf(s.ffnMid), note: 'SiLU 门控 × 上投影，d_ff=' + dff });
+      steps.push({ kind: 'res2', i, shape: fmtShape(shapeOf(s.afterRes2)),
+        stats: statsOf(s.afterRes2) });
+    });
+    const lastProbs = r.probs[r.probs.length - 1];
+    const { top5 } = top5Of(lastProbs);
+    steps.push({ kind: 'head', top5, shape: '[' + tokens.length + ', ' + window.Vocab.length + ']',
+      ms: totalMs, note: 'Final RMSNorm → h·Eᵀ（权重绑定），预测下一个 token' });
+
+    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
+    AttentionHeatmap.setLayer(collect.attn.length - 1);
+    StepPlayer.arm(steps, (s) => this._apply(s), () => ArchitectureRenderer.clearHighlight());
+    DataFlowAnimator.play(steps, {
+      onStep: (s, i) => StepPlayer.apply(s, i),
+      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
+    });
+  },
+
+  /** Dense 视图：整段预填充后逐词生成（每步整段重算，无 KV Cache 简化） */
+  runGenerate(){
+    const text = document.getElementById('input-text').value;
+    if(!text.trim()) return;
+    if(ArchitectureRenderer.view !== 'dense') ArchitectureRenderer.setView('dense');
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+
+    const tokens = tokenizer.tokenize(text);
+    const ids = toIds(tokens);
+    ensureModern(modernModel.dense);
+    const steps = [{ kind: 'note' }];
+    const data = [];
+    let prefix = ids.slice();
+    const genToks = [];
+    for(let s = 0; s < 5; s++){
+      const t0 = performance.now();
+      const collect = {};
+      const r = modernModel.dense.forward(prefix, collect);
+      const ms = +(performance.now() - t0).toFixed(1);
+      const { top5, next } = top5Of(r.probs[r.probs.length - 1]);
+      data.push({ prefix: tokenizer.tokenize(text).concat(genToks),
+                  top5, chosen: window.Vocab[next], p: r.probs[r.probs.length-1][next],
+                  ms, attn: collect.attn });
+      steps.push({ kind: 'gen', di: data.length - 1 });
+      prefix = prefix.concat([next]);
+      genToks.push(window.Vocab[next]);
+      if(next === window.Vocab.indexOf('<eos>')) break;
+    }
+    steps.push({ kind: 'end', tokens: genToks });
+    this._genData = data;
+
+    StepPlayer.arm(steps, (s) => this._applyGen(s), () => ArchitectureRenderer.clearHighlight());
+    DataFlowAnimator.play(steps, {
+      onStep: (s, i) => StepPlayer.apply(s, i),
+      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
+    });
+  },
+
+  _apply(s){
+    const log = document.getElementById('step-log');
+    if(s.kind === 'tok'){
+      ArchitectureRenderer.highlight(['tok']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '分词', tokens: s.tokens, ms: 0, meta: s.tokens.length + ' 个 token' }, 0));
+    }else if(s.kind === 'emb'){
+      ArchitectureRenderer.highlight(['emb']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: 'Embedding 查表', shape: s.shape, stats: s.stats, note: s.note }, 1));
+    }else if(s.kind === 'rope'){
+      ArchitectureRenderer.highlight(['rope']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: 'RoPE 旋转位置编码', shape: '[每层注意力内作用于 Q/K]', note: s.note }, 2));
+    }else if(s.kind === 'attn'){
+      ArchitectureRenderer.highlight(['gqa']);
+      AttentionHeatmap.setLayer(s.i);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · RMSNorm + RoPE + GQA 掩码自注意力',
+          shape: s.shape, stats: s.stats, note: s.note }, 3 + s.i * 4));
+    }else if(s.kind === 'res1'){
+      ArchitectureRenderer.highlight(['res1']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · ⊕ 残差', shape: s.shape, stats: s.stats,
+          note: s.note }, 4 + s.i * 4));
+    }else if(s.kind === 'ffn'){
+      ArchitectureRenderer.highlight(['swiglu']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · SwiGLU FFN（SiLU 门控）',
+          shape: s.shape, stats: s.stats, note: s.note }, 5 + s.i * 4));
+    }else if(s.kind === 'res2'){
+      ArchitectureRenderer.highlight(['res2']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · ⊕ 残差', shape: s.shape, stats: s.stats }, 6 + s.i * 4));
+    }else if(s.kind === 'head'){
+      ArchitectureRenderer.highlight(['lnf', 'head']);
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current"><span class="log-step">Final RMSNorm + LM Head（权重绑定）</span>' +
+        '<span class="log-shape">[1, L, ' + Config.d_model + '] → ' + s.shape + '</span>' +
+        TopKChart.render(s.top5) +
+        '<span class="log-meta">下一 token 分布（随机权重仅展示机制）· 总耗时 ' + s.ms + ' ms</span></li>');
+    }
+    [...log.children].forEach(row => {
+      if(row !== log.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
+    });
+    log.lastElementChild.scrollIntoView({ block:'nearest' });
+    if(s.stats) document.getElementById('tensor-tracker').innerHTML =
+      '<b>当前张量</b> · ' + log.lastElementChild.querySelector('.log-step').textContent + '<br>' +
+      '形状 <b>' + (s.shape || '[1, L, ' + Config.d_model + ']') + '</b><br>' +
+      'min ' + s.stats.min + ' / max ' + s.stats.max + ' / mean ' + s.stats.mean;
+  },
+
+  _applyGen(s){
+    const log = document.getElementById('step-log');
+    if(s.kind === 'note'){
+      ArchitectureRenderer.highlight(['tok', 'emb']);
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-note">⚠️ 权重随机初始化（RMSNorm+RoPE+GQA+SwiGLU）——' +
+        '预填充完成，开始逐词生成（每步整段重算，演示未用 KV Cache）。</span></li>');
+    }else if(s.kind === 'gen'){
+      const d = this._genData[s.di];
+      AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self' });
+      ArchitectureRenderer.highlight(['head']);
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current"><span class="log-step">生成第 ' + (s.di + 1) +
+        ' 步 · 前缀 ' + d.prefix.length + ' tokens</span>' +
+        TopKChart.render(d.top5) +
+        '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        ' · ' + d.ms + ' ms · 热力图=末层 GQA 注意力</span></li>');
+    }else if(s.kind === 'end'){
+      log.insertAdjacentHTML('beforeend',
+        '<li><span class="log-step">生成结束：</span>' +
+        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+          : '（未产生 token）') + '</li>');
+      ArchitectureRenderer.clearHighlight();
+      return;
+    }
+    [...log.children].forEach(row => {
+      if(row !== log.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
+    });
+    log.lastElementChild.scrollIntoView({ block:'nearest' });
+  }
+};
 
 /* ============================================================
-   模块12b：MoE Top-K 路由演示（稀疏激活机制可视化，D8 同款免责：
-   门控为确定性伪随机，仅展示路由机制而非训练后的专家分工）
+   模块12c：MoE 真实前向演示（Router Top-2 + 4 专家，快照式）
    ============================================================ */
-const MoERouterDemo = {
-  running: false,
-
-  /** 主流程：逐 token 展示 Router 打分 → Top-2 专家激活 → 负载统计 */
-  async run(){
-    if(this.running){ this.running = false; return; }
+const MoEDemo = {
+  runForward(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'moe') ArchitectureRenderer.setView('moe');
-    this.running = true;
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML = '';
+    ArchitectureRenderer.clearHighlight();
+
+    const tokens = tokenizer.tokenize(text);
+    const ids = toIds(tokens);
+    ensureModern(modernModel.moe);
+    const collect = {};
+    const r = modernModel.moe.forward(ids, collect);
+    const E = modernModel.moe.nExperts;
+
+    const steps = [
+      { kind: 'note', html: '⚠️ 权重随机初始化——展示 Router Top-2 稀疏激活的真实前向；' +
+        '示意实现全专家计算后按门控合成，真实推理只算被选中专家（激活参数 ≈ 2/' + E + '）。' },
+      { kind: 'tok', tokens }
+    ];
+    collect.layers.forEach((s, i) => {
+      steps.push({ kind: 'attn', i, shape: fmtShape(shapeOf(s.attnOut)),
+        stats: statsOf(s.attnOut), note: 'RMSNorm→RoPE→GQA 掩码自注意力' });
+      steps.push({ kind: 'res1', i, shape: fmtShape(shapeOf(s.afterRes1)),
+        stats: statsOf(s.afterRes1) });
+      steps.push({ kind: 'router', i, gates: s.gates,
+        note: '每 token softmax→Top-2，其余专家门控置 0' });
+      steps.push({ kind: 'wsum', i, shape: fmtShape(shapeOf(s.afterRes2)),
+        stats: statsOf(s.afterRes2), note: 'y = Σ gᵢ·Expertᵢ(x)，⊕残差后输出' });
+    });
+    const { top5 } = top5Of(r.probs[r.probs.length - 1]);
+    steps.push({ kind: 'end', top5,
+      tokens: collect.layers.map(s => s.gates) });
+
+    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
+    AttentionHeatmap.setLayer(collect.attn.length - 1);
+    StepPlayer.arm(steps, (s) => this._apply(s, tokens), () => ArchitectureRenderer.clearHighlight());
+    DataFlowAnimator.play(steps, {
+      onStep: (s, i) => StepPlayer.apply(s, i),
+      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
+    });
+  },
+
+  _apply(s, srcTokens){
     const log = document.getElementById('step-log');
-    log.innerHTML = '';
-    AttentionHeatmap.clear();
-    log.insertAdjacentHTML('beforeend',
-      '<li><span class="log-note">⚠️ 门控为伪随机演示：仅展示「Top-K 稀疏激活」机制，' +
-      '真实模型经训练后专家会自发分工。</span></li>');
-
-    const toks = tokenizer.tokenize(text).slice(0, 6);
-    const E = 4;
-    const load = [0, 0, 0, 0];
-
-    for(const t of toks){
-      if(!this.running) break;
-      /* 由 token 字符码播种的确定性门控 logits */
-      let seed = 0;
-      for(const ch of t) seed = (seed * 31 + ch.charCodeAt(0)) | 0;
-      const logits = [...Array(E)].map((_, i) => Math.sin(seed * (i + 3)) * 1.3);
-      const mx = Math.max(...logits);
-      const exps = logits.map(v => Math.exp(v - mx));
-      const Z = exps.reduce((a, b) => a + b, 0);
-      const probs = exps.map(v => v / Z);
-      const order = [...probs.keys()].sort((a, b) => probs[b] - probs[a]).slice(0, 2);
-      order.forEach(i => load[i]++);
-
-      ArchitectureRenderer.highlight(
-        ['router', 'exp' + (order[0] + 1), 'exp' + (order[1] + 1)]);
-      const g = order.map(i =>
-        '<span class="chip">专家' + (i + 1) + ' g=' + probs[i].toFixed(2) + '</span>').join('');
+    if(s.kind === 'note'){
       log.insertAdjacentHTML('beforeend',
-        '<li class="current"><span class="log-step">「' + t + '」</span>' + g +
-        '<span class="log-meta">Top-2 激活 · 其余 ' + (E - 2) +
-        ' 个专家本次跳过（激活参数 ≈ 2/' + E + '）</span></li>');
-      [...log.children].forEach(li => {
-        if(li !== log.lastElementChild){
-          li.classList.remove('current'); li.classList.add('done');
-        }
-      });
-      log.lastElementChild.scrollIntoView({ block:'nearest' });
+        '<li><span class="log-note">' + s.html + '</span></li>');
+    }else if(s.kind === 'tok'){
+      ArchitectureRenderer.highlight(['tok']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '分词', tokens: s.tokens, ms: 0 }, 0));
+    }else if(s.kind === 'attn'){
+      ArchitectureRenderer.highlight(['gqa']);
+      AttentionHeatmap.setLayer(s.i);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · GQA 掩码自注意力',
+          shape: s.shape, stats: s.stats, note: s.note }, 0));
+    }else if(s.kind === 'res1'){
+      ArchitectureRenderer.highlight(['an1']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · Add & Norm', shape: s.shape,
+          stats: s.stats }, 0));
+    }else if(s.kind === 'router'){
+      ArchitectureRenderer.highlight(['router']);
+      /* 每 token 的 Top-2 专家与门控权重 */
+      const per = s.gates.map((g, t) => {
+        const order = [...g.keys()].sort((a, b) => g[b] - g[a]).slice(0, 2);
+        return '「' + (srcTokens[t] || '?') + '」→' +
+          order.map(e => 'E' + (e + 1) + '(' + g[e].toFixed(2) + ')').join('+');
+      }).join(' · ');
+      log.insertAdjacentHTML('beforeend',
+        '<li class="current"><span class="log-step">第 ' + (s.i + 1) +
+        ' 层 · MoE Router 门控（Top-2/4）</span>' +
+        '<span class="log-meta">' + per + '</span></li>');
       document.getElementById('tensor-tracker').innerHTML =
-        '<b>MoE Router</b><br>gate logits <b>[1, ' + E + ']</b> → Top-2<br>' +
-        '总参数 ∝ E · 激活参数 ∝ K/E';
-      await sleep(650);
-    }
-    if(this.running){
+        '<b>MoE Router</b> · 第 ' + (s.i + 1) + ' 层<br>' +
+        'gate logits [1, L, 4] → Top-2<br>总参数 ∝ E · 激活参数 ∝ K/E';
+    }else if(s.kind === 'wsum'){
+      ArchitectureRenderer.highlight(['wsum', 'an2']);
+      log.insertAdjacentHTML('beforeend', logRowHTML(
+        { label: '第 ' + (s.i + 1) + ' 层 · 稀疏加权合成 + Add & Norm',
+          shape: s.shape, stats: s.stats, note: s.note }, 0));
+    }else if(s.kind === 'end'){
+      ArchitectureRenderer.highlight(['lnf', 'head']);
+      /* 全层专家负载统计 */
+      const load = [0, 0, 0, 0];
+      s.tokens.forEach(gates => gates.forEach(g => {
+        const order = [...g.keys()].sort((a, b) => g[b] - g[a]).slice(0, 2);
+        order.forEach(e => load[e]++);
+      }));
       log.insertAdjacentHTML('beforeend',
-        '<li><span class="log-step">专家负载统计：</span>' +
-        load.map((v, i) => '专家' + (i + 1) + '×' + v).join(' · ') +
+        '<li><span class="log-step">LM Head（权重绑定）· 专家负载：</span>' +
+        load.map((v, i) => 'E' + (i + 1) + '×' + v).join(' · ') +
         '<span class="log-meta">负载不均时需均衡损失/偏置调节（Switch → DeepSeek-V3 演进）</span></li>');
+      return;
     }
-    this.running = false;
+    [...log.children].forEach(row => {
+      if(row !== log.lastElementChild){ row.classList.remove('current'); row.classList.add('done'); }
+    });
+    log.lastElementChild.scrollIntoView({ block:'nearest' });
   }
 };
 
@@ -3098,7 +3524,6 @@ const App = {
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
-    DecoderDemo.running = false;   // 打断解码演示
     DataFlowAnimator.stop();
     const log = document.getElementById('step-log');
     log.innerHTML = '';
@@ -3109,9 +3534,11 @@ const App = {
     AttentionHeatmap.setData({
       tokens: result.tokens, layers: result.attnLayers, kind: 'self' });
     AttentionHeatmap.setLayer(result.attnLayers.length - 1);
+    StepPlayer.arm(result.steps, (s, idx) => this._applyStep(s, idx),
+      () => ArchitectureRenderer.clearHighlight());
     DataFlowAnimator.play(result.steps, {
-      onStep: (s, idx) => this._applyStep(s, idx),
-      onDone: () => ArchitectureRenderer.clearHighlight()
+      onStep: (s, idx) => StepPlayer.apply(s, idx),
+      onDone: () => { if(StepPlayer.onDone) StepPlayer.onDone(); }
     });
   },
   /** 单步应用：高亮模块 + 追加日志 + 更新张量追踪器 */
@@ -3135,8 +3562,6 @@ const App = {
   },
   /** 超参数或输入变化时重置运行状态 */
   resetRunState(){
-    DecoderDemo.running = false;
-    MoERouterDemo.running = false;
     DataFlowAnimator.stop();
     document.getElementById('step-log').innerHTML = '';
     document.getElementById('tensor-tracker').innerHTML =
@@ -3146,11 +3571,33 @@ const App = {
   }
 };
 
-document.getElementById('run-forward').addEventListener('click',
-  () => App.runForward());
-
 /* 配置变化：清空运行状态（模型已由模块6监听重建） */
 window.addEventListener('config-changed', () => App.resetRunState());
+
+/* ============================================================
+   模块14b：运行按钮随视图自适应（消除「演示只属于 2017」的误导）
+   ============================================================ */
+function updateRunButtons(view){
+  const b1 = document.getElementById('run-forward');
+  const b2 = document.getElementById('run-decoder');
+  const spec = {
+    orig: [['▶ 开始前向传播', () => App.runForward()],
+           ['⏩ Decoder 演示', () => DecoderDemo.run()]],
+    dense: [['▶ Dense 前向', () => DenseDemo.runForward()],
+            ['⏩ Dense 生成', () => DenseDemo.runGenerate()]],
+    moe: [['▶ MoE 前向（含路由）', () => MoEDemo.runForward()],
+          ['⏩ MoE 生成', () => MoEDemo.runGenerate()]]
+  }[view];
+  [b1, b2].forEach((b, i) => {
+    if(spec && spec[i]){
+      b.disabled = false; b.style.opacity = ''; b.title = '';
+      b.textContent = spec[i][0]; b.onclick = spec[i][1];
+    }else{
+      b.disabled = true; b.style.opacity = .5; b.onclick = null;
+      b.title = '概念/谱系视图：结构解剖与论文线联动，无端到端前向演示';
+    }
+  });
+}
 
 /* 热力图初始占位提示；控件组在无数据前禁用置灰 */
 document.getElementById('attn-heatmap').innerHTML =
@@ -3166,11 +3613,9 @@ document.getElementById('attn-heatmap').innerHTML =
 document.querySelectorAll('#kind-seg button').forEach(b =>
   b.addEventListener('click', () => AttentionHeatmap.setKind(b.dataset.kind)));
 
-/* 架构视图切换 + MoE 路由演示 */
+/* 架构视图切换（运行按钮由 updateRunButtons 随视图自适应） */
 document.querySelectorAll('#view-seg button').forEach(b =>
   b.addEventListener('click', () => ArchitectureRenderer.setView(b.dataset.view)));
-document.getElementById('moe-demo').addEventListener('click',
-  () => MoERouterDemo.run());
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
