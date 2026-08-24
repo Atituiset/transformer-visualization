@@ -341,6 +341,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
     <label for="input-text">输入文本</label>
     <textarea id="input-text" rows="2">我 爱 自然语言处理</textarea>
+    <div id="token-chips" class="chip-row" title="分词结果"></div>
 
     <label for="preset-select">预设句子</label>
     <select id="preset-select"></select>
@@ -457,6 +458,98 @@ function renderParamSummary(){
     '每层 Encoder：' + fmtNum(p.perLayer) + '<br>' +
     'Encoder 总计（' + Config.num_layers + ' 层）：<b>' + fmtNum(p.encoderTotal) + '</b>';
 }
+
+/* ============================================================
+   模块3：分词器（设计决策 D5：词典贪婪最长匹配 + 回退规则）
+   ============================================================ */
+class Tokenizer {
+  constructor(){
+    /** 多字词词典：key 为原始串，value 为拆分后的目标词序列 */
+    this.lexicon = new Map([
+      ['自然语言处理', ['自然','语言','处理']],
+      ['机器学习',     ['机器','学习']],
+      ['深度学习',     ['深度','学习']],
+      ['神经网络',     ['神经','网络']],
+      ['注意力机制',   ['注意力','机制']],
+      ['人工智能',     ['人工','智能']],
+      ['transformer',  ['transformer']]
+    ]);
+    /** 可匹配词集合（贪婪最长匹配的目标） */
+    this.words = new Set();
+    for(const exp of this.lexicon.values()) exp.forEach(w => this.words.add(w));
+    this.maxLen = Math.max(...[...this.words].map(w => w.length));
+  }
+  /**
+   * 分词主流程：①按空白切段 ②段内贪婪最长词典匹配
+   * ③未命中时连续 [A-Za-z0-9] 合并为一个 token ④其余（CJK 等）逐字切分
+   * @param {string} text 原始输入
+   * @returns {string[]} token 序列
+   */
+  tokenize(text){
+    const out = [];
+    for(const seg of String(text).trim().split(/\s+/)){
+      if(!seg) continue;
+      let i = 0;
+      while(i < seg.length){
+        /* 贪婪最长匹配 */
+        let hit = null;
+        for(let len = Math.min(this.maxLen, seg.length - i); len >= 2; len--){
+          const w = seg.slice(i, i + len);
+          if(this.words.has(w)){ hit = w; break; }
+        }
+        if(hit){ out.push(hit); i += hit.length; continue; }
+        /* 英文/数字连续段合并为一个 token */
+        if(/[A-Za-z0-9]/.test(seg[i])){
+          let j = i;
+          while(j < seg.length && /[A-Za-z0-9]/.test(seg[j])) j++;
+          out.push(seg.slice(i, j)); i = j;
+          continue;
+        }
+        /* 其余单字符 */
+        out.push(seg[i]); i++;
+      }
+    }
+    return out;
+  }
+  /** @returns {string[]} 预设示例句 */
+  getPresets(){
+    return ['我 爱 自然语言处理', 'Transformer 是 深度学习 模型',
+            '注意力机制 很 强大', 'Hello Transformer'];
+  }
+  /**
+   * 构建词表：<pad>/<bos>/<eos> 特殊 token + 词典全部目标词 + 预设句覆盖。
+   * @returns {string[]}
+   */
+  buildVocab(){
+    const set = new Set(['<pad>','<bos>','<eos>']);
+    this.words.forEach(w => set.add(w));
+    for(const p of this.getPresets())
+      for(const t of this.tokenize(p)) set.add(t);
+    return [...set];
+  }
+}
+
+const tokenizer = new Tokenizer();
+window.Vocab = tokenizer.buildVocab();
+
+/** 右栏 token 芯片渲染（随输入实时刷新） */
+function renderTokenChips(){
+  const toks = tokenizer.tokenize(document.getElementById('input-text').value);
+  document.getElementById('token-chips').innerHTML =
+    toks.map(t => '<span class="chip">' + t + '</span>').join('');
+}
+
+(function initTokenizerUI(){
+  const sel = document.getElementById('preset-select');
+  sel.innerHTML = tokenizer.getPresets()
+    .map(s => '<option>' + s + '</option>').join('');
+  sel.addEventListener('change', e => {
+    document.getElementById('input-text').value = e.target.value;
+    renderTokenChips();
+  });
+  document.getElementById('input-text').addEventListener('input', renderTokenChips);
+  renderTokenChips();
+})();
 
 /* ============================================================
    模块14（接线部分）：超参数面板事件绑定
