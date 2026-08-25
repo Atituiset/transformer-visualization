@@ -4,7 +4,7 @@
   Transformer 架构演进交互式可视化学习应用
   作者：atituiset
   日期：2026-08-24
-  版本：v2.0.0
+  版本：v2.1.0
   说明：单文件纯前端应用。六大架构视图（前史 RNN→2017 / 原版
         Enc-Dec / Decoder-Only Dense / MoE / Attention 演进 / SSM）
         + 1990→2025 论文线时间轴。TensorFlow.js 完成前向推理模拟，
@@ -127,6 +127,13 @@ html[data-theme="dark"] .panel h2{color:var(--c-primary-light);}
   content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;
   background:var(--c-border);
 }
+.tl-era{margin:14px 0 10px;padding:6px 9px;border-radius:8px;
+  background:rgba(26,35,126,.06);border-left:3px solid var(--c-primary);
+  font-size:12.5px;font-weight:700;color:var(--c-primary);line-height:1.5;
+  list-style:none;}
+html[data-theme="dark"] .tl-era{background:rgba(140,158,255,.08);}
+.tl-era small{display:block;font-weight:400;color:var(--c-text-dim);
+  font-size:11.5px;margin-top:2px;}
 .tl-item{position:relative;margin-bottom:16px;cursor:pointer;}
 .tl-item::before{
   content:"";position:absolute;left:-21px;top:5px;width:10px;height:10px;border-radius:50%;
@@ -332,7 +339,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
 <header id="topbar">
   <h1>Transformer 架构演进交互式可视化</h1>
-  <span id="version-tag">v2.0.0</span>
+  <span id="version-tag">v2.1.0</span>
   <span class="spacer"></span>
   <button id="theme-toggle" class="btn" title="切换深浅主题">🌙 深色模式</button>
 </header>
@@ -352,6 +359,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       <div class="arch-toolbar">
         <h3>模型结构 <span style="font-weight:400;font-size:12px;">（悬停查看说明 · 点击查看详情）</span></h3>
         <span class="seg" id="view-seg">
+          <button data-view="dawn" title="1943-2016：神经元→感知机→反向传播→深度学习复兴">前传·基石</button>
           <button data-view="pre" title="1990→2017：RNN/LSTM/Seq2Seq/Attention 如何一步步演进到 Transformer">前史 RNN→2017</button>
           <button data-view="orig" class="on" title="2017 原版 Encoder-Decoder">2017 原版</button>
           <button data-view="dense" title="GPT → LLaMA → Qwen-Dense：现代 Decoder-Only Dense">Decoder-Only·Dense</button>
@@ -1932,6 +1940,151 @@ const MODULE_DETAILS = {
     params: '拟合参数 α、N_c（非模型参数）',
     refs: ['Kaplan et al. 2020 · Scaling Laws for Neural Language Models',
            'Hoffmann et al. 2022 · Training Compute-Optimal Large Language Models (Chinchilla)']
+  },
+
+  /* ============ 前传·基石（1943-2016） ============ */
+  'mp': {
+    title: 'MP 神经元（1943）',
+    desc: 'McCulloch 与 Pitts 把神经元抽象为「加权求和 + 阈值触发」的逻辑单元，并证明任意布尔函数都可由这样的单元组合实现——第一次把「思考」形式化为计算。所有神经网络的零号祖先。',
+    latex: ['y=\\mathbb{1}\\Big[\\sum_i w_i x_i \\ge \\theta\\Big]'],
+    shapes: ['输入 x_i ∈ {0,1} → 二值输出'],
+    code: "const y = (w.reduce((a, wv, i) => a + wv * x[i], 0) >= theta) ? 1 : 0;",
+    params: 'n 个权重 + 阈值 θ（手工设定，不可学习）',
+    refs: ['McCulloch & Pitts 1943 · A Logical Calculus of the Ideas Immanent in Nervous Activity']
+  },
+  'hebb': {
+    title: 'Hebb 学习规则（1949）',
+    desc: '「同时激发的神经元连接在一起」：共同激活的连接应当增强——第一个学习理论，纯局部、无导师。监督学习、无监督学习、对比学习（SimCLR）都是这一思想在不同时代的回声。',
+    latex: ['\\Delta w_i = \\eta\\, x_i\\, y'],
+    shapes: ['连接强度 w 按共激活增强'],
+    code: "w[i] += eta * x[i] * y;   // fire together, wire together",
+    params: '学习率 η',
+    refs: ['Hebb 1949 · The Organization of Behavior']
+  },
+  'perceptron': {
+    title: '感知机（1958）',
+    desc: 'Rosenblatt 给神经元装上「可学习的权重」：误差驱动的更新规则 + 收敛定理（线性可分数据必停），并造出专用硬件 Mark I。第一台真正「学习」的机器——局限在 11 年后由《Perceptrons》揭示。',
+    latex: ['w \\leftarrow w + \\eta\\,(t-y)\\,x'],
+    shapes: ['线性决策边界','线性可分 ⇒ 必收敛'],
+    code: "for (const {x, t} of samples)\n  w = w.add(x.mul(eta * (t - predict(x))));",
+    params: 'n 个可学习权重 + 偏置',
+    refs: ['Rosenblatt 1958 · The Perceptron: A Probabilistic Model']
+  },
+  'winter': {
+    title: '《Perceptrons》与第一次 AI 寒冬（1969）',
+    desc: 'Minsky 与 Papert 数学证明单层感知机连 XOR 都无法表示（线性不可分），叠加算力与数据匮乏、书中对多层路径的悲观论断——神经网络经费枯竭，进入第一次 AI 寒冬。解药（多层 + 非线性 + 反向传播）要到 1986 年才补上。',
+    latex: ['XOR \\notin \\text{线性可分} \\Rightarrow \\text{需隐藏层 + 非线性}'],
+    shapes: ['单层决策边界：一条直线','XOR 需要两条'],
+    code: "// XOR 需要隐藏层：\nh = sigmoid(x.matmul(W1));\ny = sigmoid(h.matmul(W2));",
+    params: '—',
+    refs: ['Minsky & Papert 1969 · Perceptrons']
+  },
+  'neocognitron': {
+    title: 'Neocognitron（1980）',
+    desc: 'Fukushima 模拟视皮层的层次化网络：交替的「特征提取层 + 池化层」逐级抽象边缘 → 形状 → 模式，且对位置平移鲁棒——卷积神经网络（LeNet/AlexNet）的直接思想祖先。',
+    latex: ['S 层（特征提取）→ C 层（池化）→ \\cdots 交替'],
+    shapes: ['逐层：边缘 → 部件 → 整体'],
+    code: "// 层次交替（现代写法）\nconst c1 = maxPool(conv2d(img, K1));\nconst c2 = maxPool(conv2d(c1, K2));",
+    params: '各层卷积核',
+    refs: ['Fukushima 1980 · Neocognitron: A Self-organizing Neural Network Model']
+  },
+  'backprop': {
+    title: '反向传播（1986）',
+    desc: 'Rumelhart、Hinton、Williams 把链式法则系统化用于多层网络：误差从输出层逐层回传、逐层更新权重——多层网络终于「训得动」，深度学习的第一块基石。今天所有 LLM 的训练核心仍是它（配自动微分）。',
+    latex: [
+      '\\frac{\\partial L}{\\partial w^{(l)}}=\\frac{\\partial L}{\\partial a^{(L)}}\\prod_{k>l}\\frac{\\partial a^{(k)}}{\\partial a^{(k-1)}}\\cdot\\frac{\\partial a^{(l)}}{\\partial w^{(l)}}'
+    ],
+    shapes: ['前向缓存激活 → 反向逐层回传'],
+    code: "// 前向存激活，反向链式乘\nlet delta = lossGrad;\nfor (let l = layers.length - 1; l >= 0; l--) {\n  grads[l] = delta.mul(activations[l].T);\n  delta = delta.matMul(layers[l].W.T).mul(actGrad[l]);\n}",
+    params: '—（训练算法）',
+    refs: ['Rumelhart, Hinton & Williams 1986 · Learning Representations by Back-propagating Errors']
+  },
+  'dbn': {
+    title: 'DBN 深度信念网络（2006）',
+    desc: 'Hinton 用逐层无监督预训练（受限玻尔兹曼机堆叠）+ 有监督微调，让「深层网络能训练」重新可行——深度学习复兴的起点。更深远的是「预训练 + 微调」范式本身：GPT/BERT 的训练哲学是它的直系后代。',
+    latex: ['P(v|h)\\;\\text{逐层建模} \\Rightarrow \\text{预训练} \\to \\text{微调}'],
+    shapes: ['逐层 RBM 堆叠','预训练 → 微调'],
+    code: "// 逐层贪心预训练，再整体微调\nfor (const layer of layers) pretrain(layer, data);\nfineTune(layers, labels);",
+    params: '各层 RBM 参数',
+    refs: ['Hinton & Salakhutdinov 2006 · A Fast Learning Algorithm for Deep Belief Nets']
+  },
+  'alexnet': {
+    title: 'AlexNet（2012）',
+    desc: 'Krizhevsky、Sutskever、Hinton 用 GPU 训练 8 层 CNN（ReLU + Dropout + 数据增强）横扫 ImageNet（top-5 错误率 26%→15%）：「大数据 + GPU 算力 + 深度网络」三驾马车第一次同时到位。深度学习黄金时代引爆点，LLM 的算力路线由此铺开。',
+    latex: ['ReLU: \\max(0,x)\\ （比 sigmoid 抗梯度消失）'],
+    shapes: ['5 卷积 + 3 全连接','6000 万参数 · 2 块 GTX 580'],
+    code: "const y = tf.relu(conv2d(x, K1).maxPool()); // ReLU + 池化\nconst out = fc(y, Wfc);",
+    params: '6000 万',
+    refs: ['Krizhevsky et al. 2012 · ImageNet Classification with Deep Convolutional Neural Networks']
+  },
+  'dqn': {
+    title: 'DQN 深度强化学习（2013-15）',
+    desc: 'DeepMind 用 CNN + 经验回放 + 目标网络，让 AI 直接从屏幕像素学会打 Atari 游戏，达到人类水平——深度强化学习的开端。RL 谱系：DQN（游戏）→ AlphaGo → RLHF（对齐）→ R1（可验证奖励推理），强化学习一路走进 LLM 中心舞台。',
+    latex: [
+      'Q(s,a)\\leftarrow Q(s,a)+\\alpha\\big[r+\\gamma\\max_{a\'}Q(s\',a\')-Q(s,a)\\big]'
+    ],
+    shapes: ['像素 [84,84,4] → Q 值 [|A|]','经验回放池'],
+    code: "const target = r + gamma * maxQ(nextState);\nupdate(Q, s, a, target);   // 经验回放采样训练",
+    params: 'CNN ~千万',
+    refs: ['Mnih et al. 2013/2015 · Human-level Control through Deep Reinforcement Learning']
+  },
+  'adam': {
+    title: 'Adam 优化器（2014）',
+    desc: '一阶动矩 + 二阶动矩的偏置校正估计，为每个参数自适应学习率：对超参鲁棒、收敛快、默认即好用。深度学习的事实标准——所有 LLM 至今仍在用其变体 AdamW（解耦权重衰减）。',
+    latex: [
+      'm_t=\\beta_1 m_{t-1}+(1-\\beta_1)g_t,\\;\\; v_t=\\beta_2 v_{t-1}+(1-\\beta_2)g_t^2',
+      '\\theta\\leftarrow\\theta-\\eta\\,\\hat{m}_t/(\\sqrt{\\hat{v}_t}+\\varepsilon)'
+    ],
+    shapes: ['每个参数 2 个动矩状态'],
+    code: "m = b1*m + (1-b1)*g;          // 一阶动矩\nv = b2*v + (1-b2)*g.square(); // 二阶动矩\ntheta -= lr * m.hat().div(v.hat().sqrt().add(eps));",
+    params: '每参数 2 倍状态量',
+    refs: ['Kingma & Ba 2014 · Adam: A Method for Stochastic Optimization',
+           'Loshchilov & Hutter 2017 · AdamW']
+  },
+  'bn': {
+    title: 'Batch Normalization（2015）',
+    desc: '对每个 mini-batch 做标准化 + 可学习缩放平移：训练提速、更稳、可用更大学习率。但依赖 batch 统计量，在序列模型/小 batch 下失效——由此演化出按特征维归一化的 LayerNorm（2016），再简化为 RMSNorm（2019）：Transformer 归一化线的历史起点在这里。',
+    latex: [
+      '\\hat{x}=\\frac{x-\\mu_B}{\\sqrt{\\sigma_B^2+\\varepsilon}}\\cdot\\gamma+\\beta'
+    ],
+    shapes: ['按 batch 维归一化 [B,L,d]','推理用滑动平均'],
+    code: "const mu = x.mean(0, true), var_ = x.variance(0, true);\nconst y = x.sub(mu).div(var_.add(eps).sqrt()).mul(g).add(b);",
+    params: 'γ, β + 统计量缓存（2d）',
+    refs: ['Ioffe & Szegedy 2015 · Batch Normalization',
+           'Ba et al. 2016 · Layer Normalization（演进）']
+  },
+  'gan': {
+    title: 'GAN 生成对抗网络（2014）',
+    desc: '生成器 G 与判别器 D 极小极大博弈：G 造假骗过 D，D 升级识破——对抗中 G 学会以假乱真。开启 AI 生成模型时代；与扩散同为生成两大路线，扩散最终在语言上胜出（LLaDA/Mercury），但对抗思想仍活在各类训练技巧中。',
+    latex: [
+      '\\min_G \\max_D\\; \\mathbb{E}[\\log D(x)]+\\mathbb{E}[\\log(1-D(G(z)))]'
+    ],
+    shapes: ['噪声 z → G → 假样本 → D → 真/假'],
+    code: "const fake = G(z);\nconst dLoss = bce(D(x), 1) + bce(D(fake.detach()), 0);\nconst gLoss = bce(D(fake), 1);   // 骗过 D",
+    params: 'G 与 D 各一套',
+    refs: ['Goodfellow et al. 2014 · Generative Adversarial Nets']
+  },
+  'resnet': {
+    title: 'ResNet 残差网络（2016）',
+    desc: '恒等旁路 y = F(x) + x：让网络只学「残差修正」而非完整映射，梯度有了高速通道——152 层不再是问题，深度退化消失。次年 Transformer 的「Add & Norm」直接继承同一思想：本应用架构图里所有琥珀色虚线旁路都是它。',
+    latex: [
+      'y=\\mathcal{F}(x,\\{W_i\\})+x\\quad\\text{（恒等映射零成本）}'
+    ],
+    shapes: ['输入与输出同形 → 可直接相加','深度 152+ 层'],
+    code: "const y = block(x).add(x);   // F(x) + x\n// Transformer 里：h = ln(x.add(attn))",
+    params: '与普通层相同（旁路零参数）',
+    refs: ['He et al. 2016 · Deep Residual Learning for Image Recognition']
+  },
+  'ebt': {
+    title: 'Energy-Based Transformers（2025）',
+    desc: '用能量函数 E(x,y) 给「输入-候选答案」打分，推理 = 沿能量下降的迭代优化——把 System 2 式深思做进架构本身，而非靠生成更长的思维链。与 TTT/Titans 同属「测试时计算」路线；训练更稳、泛化更好的主张尚待更大规模验证，2025 年最值得盯的新方向之一。',
+    latex: [
+      'y^{(k+1)}=y^{(k)}-\\eta\\,\\nabla_y\\,E_\\theta(x,\\,y^{(k)}),\\quad y^{(0)}=\\text{初始猜测}'
+    ],
+    shapes: ['每步：能量梯度下降','推理算力 ↔ 答案质量 可调'],
+    code: "let y = initGuess(x);\nfor (let k = 0; k < K; k++)\n  y = y.sub(gradY(x, y).mul(eta));   // 能量下降\nreturn y;",
+    params: '能量网络 E_θ',
+    refs: ['Khona et al. 2025 · Energy-Based Transformers are Scalable Learners']
   }
 };
 
@@ -2340,7 +2493,9 @@ const ARCH_VIEW_FRONTIER = {
     { id:'titans', x:269, y:330, label:'Titans 神经记忆', sub:'2025 · 惊讶度驱动 · 千万级上下文', detail:'titans',
       tip:'Google：长期记忆与短期注意力分工' },
     { id:'multimodal', x:269, y:440, label:'多模态融合', sub:'LLaVA · Chameleon · 原生 Omni', detail:'multimodal',
-      tip:'视觉/音频统一成 token 进 Transformer' }
+      tip:'视觉/音频统一成 token 进 Transformer' },
+    { id:'ebt', x:470, y:330, label:'EBT 能量 Transformer', sub:'2025 · 能量函数隐式推理', detail:'ebt',
+      tip:'推理 = 能量最小化的迭代下降；测试时计算新分支' }
   ],
   frames: [],
   edges: [
@@ -2390,6 +2545,65 @@ const ARCH_VIEW_TRAIN = {
   residuals: []
 };
 
+/* ---- 视图：前传·基石（1943-2016，深度学习从神经元到复兴） ---- */
+const ARCH_VIEW_DAWN = {
+  nodeW: 160,
+  colTitles: [
+    { x:370, y:60,  text:'理论奠基 1943-1969' },
+    { x:370, y:230, text:'复兴与突破 1980-2012' },
+    { x:370, y:400, text:'现代基石 2014-2016' }
+  ],
+  nodes: [
+    { id:'mp', x:24, y:110, label:'MP 神经元 (1943)',
+      sub:'加权求和 + 阈值触发', detail:'mp',
+      tip:'神经网络的数学原点：任意布尔函数可由其组合实现' },
+    { id:'hebb', x:208, y:110, label:'Hebb 规则 (1949)',
+      sub:'共同激活 → 连接增强', detail:'hebb',
+      tip:'第一个学习理论；无监督/对比学习的思想源头' },
+    { id:'perceptron', x:392, y:110, label:'感知机 (1958)',
+      sub:'可学习的线性分类器', detail:'perceptron',
+      tip:'第一台真正「学习」的机器（当时是硬件）' },
+    { id:'winter', x:576, y:110, label:'《Perceptrons》(1969)',
+      sub:'XOR 不可分 → AI 寒冬', detail:'winter',
+      tip:'单层不够：需要多层 + 非线性（1986 补上）' },
+    { id:'neocognitron', x:24, y:280, label:'Neocognitron (1980)',
+      sub:'层次特征提取 → CNN 前身', detail:'neocognitron',
+      tip:'模拟视皮层的交替结构：卷积+池化' },
+    { id:'backprop', x:208, y:280, label:'反向传播 (1986)',
+      sub:'链式法则逐层回传', detail:'backprop',
+      tip:'多层网络终于「训得动」——今天所有 LLM 的训练核心' },
+    { id:'dbn', x:392, y:280, label:'DBN (2006)',
+      sub:'逐层预训练 + 微调', detail:'dbn',
+      tip:'深度学习复兴起点；预训练+微调范式的第一次胜利' },
+    { id:'alexnet', x:576, y:280, label:'AlexNet (2012)',
+      sub:'GPU + 大数据 引爆', detail:'alexnet',
+      tip:'三驾马车第一次同时到位；LLM 算力路线由此铺开' },
+    { id:'adam', x:24, y:450, label:'Adam (2014)',
+      sub:'自适应动矩优化器', detail:'adam',
+      tip:'所有 LLM 至今的默认优化器（AdamW 变体）' },
+    { id:'gan', x:208, y:450, label:'GAN (2014)',
+      sub:'生成对抗 · 生成模型起点', detail:'gan',
+      tip:'对抗/生成思想 → 扩散模型（LLaDA/Mercury）' },
+    { id:'bn', x:392, y:450, label:'BatchNorm (2015)',
+      sub:'→ LayerNorm → RMSNorm', detail:'bn',
+      tip:'归一化演进线的起点；序列模型最终选择 RMSNorm' },
+    { id:'resnet', x:576, y:450, label:'ResNet (2016)',
+      sub:'残差旁路 → Transformer Add', detail:'resnet',
+      tip:'架构图里所有琥珀虚线旁路都是它' }
+  ],
+  frames: [],
+  edges: [],
+  special: [
+    { d:'M 184 131 L 208 131' }, { d:'M 368 131 L 392 131' },
+    { d:'M 552 131 L 576 131' },
+    { d:'M 184 301 L 208 301' }, { d:'M 368 301 L 392 301' },
+    { d:'M 552 301 L 576 301' },
+    { d:'M 184 471 L 208 471' }, { d:'M 368 471 L 392 471' },
+    { d:'M 552 471 L 576 471' }
+  ],
+  residuals: []
+};
+
 /** 视图注册表：id → 布局（orig 复用模块8 的常量） */
 const ARCH_VIEWS = {
   pre:   ARCH_VIEW_PRE,
@@ -2402,7 +2616,8 @@ const ARCH_VIEWS = {
   ssm:   ARCH_VIEW_SSM,
   gen:   ARCH_VIEW_GEN,
   frontier: ARCH_VIEW_FRONTIER,
-  train: ARCH_VIEW_TRAIN
+  train: ARCH_VIEW_TRAIN,
+  dawn:  ARCH_VIEW_DAWN
 };
 /** 节点 id → 模块详情键（步骤解释时把 moduleId 映射到 MODULE_DETAILS） */
 const NODE2DETAIL = {};
@@ -2581,7 +2796,50 @@ document.getElementById('arch-svg').addEventListener('click', () =>
    模块9：历史演进时间轴（完整论文线：1990 → 2025，26 节点）
    每条目 view 指定联动架构视图；highlights 为该视图内高亮节点
    ============================================================ */
+/* 四阶段划分（对应 docs/timeline.md 的知识线结构） */
+const ERAS = [
+  { from:1943, to:1989, label:'第一阶段 · 神经网络诞生（1943-1986）',
+    meaning:'计算机拥有神经元，找到多层网络训练方法' },
+  { from:1990, to:2016, label:'第二阶段 · 深度学习复兴与突破（1990-2016）',
+    meaning:'数据、算法、算力三驾马车，深度学习进入黄金时代' },
+  { from:2017, to:2022, label:'第三阶段 · Transformer 时代（2017-2022）',
+    meaning:'模型规模爆发，Transformer 成为通用基础架构' },
+  { from:2023, to:2100, label:'第四阶段 · 后 Transformer 探索（2023-2025）',
+    meaning:'追求高效率、长上下文、低成本，迈向通用智能' }
+];
+
 const HISTORY = [
+  /* ---- 第一阶段：神经网络诞生 1943-1986 ---- */
+  { year:1943, view:'dawn', name:'MP 神经元',
+    paper:'A Logical Calculus of the Ideas Immanent in Nervous Activity (McCulloch & Pitts)',
+    contrib:'神经活动逻辑演算，人工神经网络理论基石',
+    highlights:['mp'],
+    note:'一切的开始：把「思考」形式化为加权求和 + 阈值触发。' },
+  { year:1949, view:'dawn', name:'Hebb 学习规则',
+    paper:'The Organization of Behavior (Hebb)',
+    contrib:'共同激活强化神经元连接：第一个学习规则',
+    highlights:['hebb','mp'],
+    note:'「fire together, wire together」——无监督与对比学习思想的源头。' },
+  { year:1958, view:'dawn', name:'感知机',
+    paper:'The Perceptron (Rosenblatt)',
+    contrib:'可学习权重 + 收敛定理，开启神经网络研究先河',
+    highlights:['perceptron'],
+    note:'第一台真正「学习」的机器（硬件 Mark I），媒体一度预言机器将「走路、说话、有意识」。' },
+  { year:1969, view:'dawn', name:'《Perceptrons》与寒冬',
+    paper:'Perceptrons (Minsky & Papert)',
+    contrib:'证明单层无法表示 XOR，推动理论反思',
+    highlights:['winter'],
+    note:'一本书冻结一个领域：经费枯竭，第一次 AI 寒冬——解药（多层+反向传播）17 年后才到。' },
+  { year:1980, view:'dawn', name:'Neocognitron',
+    paper:'Neocognitron: A Self-organizing Neural Network Model (Fukushima)',
+    contrib:'层次化神经网络，卷积思想基础',
+    highlights:['neocognitron'],
+    note:'交替的特征提取与池化层——十年后 LeNet、二十年后 AlexNet 都在重复这个结构。' },
+  { year:1986, view:'dawn', name:'反向传播',
+    paper:'Learning Representations by Back-propagating Errors (Rumelhart, Hinton & Williams)',
+    contrib:'链式法则逐层回传，多层网络有效训练',
+    highlights:['backprop'],
+    note:'寒冬的解药终于到来：多层网络第一次训得动。今天每个 LLM 训练的核心仍是它。' },
   /* ---- 前史：循环时代 ---- */
   { year:1990, view:'pre', name:'简单 RNN',
     paper:'Finding Structure in Time (Elman)',
@@ -2593,17 +2851,57 @@ const HISTORY = [
     contrib:'门控记忆单元，缓解循环网络的梯度消失',
     highlights:['rnn','lstm'],
     note:'给 RNN 装上传送带：细胞状态近似线性流动。统治序列建模 15 年（GRU 是其 2014 年简化版）。' },
+  { year:1998, view:'dawn', name:'LeNet（CNN 落地）',
+    paper:'Gradient-Based Learning Applied to Document Recognition (LeCun et al.)',
+    contrib:'卷积网络落地手写数字识别',
+    highlights:['neocognitron'],
+    note:'CNN 第一次工业级应用（美国支票识别）——「端到端学习取代特征工程」的早期示范。' },
+  { year:2006, view:'dawn', name:'DBN 深度信念网络',
+    paper:'A Fast Learning Algorithm for Deep Belief Nets (Hinton & Salakhutdinov)',
+    contrib:'逐层预训练：深度网络高效训练算法',
+    highlights:['dbn','backprop'],
+    note:'深度学习复兴的起点；「预训练 + 微调」范式第一次胜利——GPT/BERT 是它的精神后代。' },
+  { year:2012, view:'dawn', name:'AlexNet',
+    paper:'ImageNet Classification with Deep Convolutional Neural Networks (Krizhevsky et al.)',
+    contrib:'GPU+ReLU+Dropout 夺冠，引爆深度学习',
+    highlights:['alexnet','backprop'],
+    note:'三驾马车（数据/算法/算力）第一次同时到位——此后一切大模型故事的地基。' },
+  { year:2013, view:'train', name:'DQN 深度强化学习',
+    paper:'Playing Atari with Deep Reinforcement Learning (Mnih et al.)',
+    contrib:'像素级自学游戏：深度 RL 开山',
+    highlights:['rlvr'],
+    note:'RL 谱系：DQN → AlphaGo → RLHF → R1——强化学习一路走进 LLM 中心舞台。' },
   { year:2014, view:'pre', name:'Seq2Seq + GRU',
     paper:'Sequence to Sequence Learning (Sutskever et al.) · Learning Phrase Representations (Cho et al.)',
     contrib:'编码器-解码器框架确立，机器翻译神经网络化',
     highlights:['lstm','s2s'],
     note:'变长→变长的通用范式诞生；但整句被压进一个固定向量，长句信息溢出——瓶颈即机会。' },
+  { year:2014, view:'dawn', name:'GAN 生成对抗',
+    paper:'Generative Adversarial Nets (Goodfellow et al.)',
+    contrib:'开启 AI 生成模型新时代',
+    highlights:['gan'],
+    note:'生成器与判别器博弈式训练——生成范式线（扩散 LM）的思想远祖。' },
+  { year:2014, view:'dawn', name:'Adam 优化器',
+    paper:'Adam: A Method for Stochastic Optimization (Kingma & Ba)',
+    contrib:'自适应动矩优化，训练效率大增',
+    highlights:['adam'],
+    note:'默认即好用的优化器：从感知机到 GPT，深度学习的事实标准（LLM 用 AdamW 变体）。' },
   { year:2015, view:'pre', name:'注意力机制',
     paper:'Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau et al.)',
     contrib:'解码器逐步「回看」全部编码状态，软对齐',
     highlights:['s2s','batt','selfattn'],
     note:'注意力的起源：α 权重动态加权编码状态（同年 Luong 提出点积版本）。只差一步——把注意力推广到序列自身。' },
   /* ---- Transformer 与三大范式 ---- */
+  { year:2015, view:'attn', name:'BatchNorm',
+    paper:'Batch Normalization: Accelerating Deep Network Training (Ioffe & Szegedy)',
+    contrib:'归一化加速训练，提升稳定性',
+    highlights:['qknorm'],
+    note:'归一化演进线起点：BN（按 batch）→ LayerNorm（按特征）→ RMSNorm——Transformer 最终选择后者，BN 对序列/小 batch 不友好是主因。' },
+  { year:2016, view:'dense', name:'ResNet 残差网络',
+    paper:'Deep Residual Learning for Image Recognition (He et al.)',
+    contrib:'残差连接，解决深度网络退化问题',
+    highlights:['res1','res2'],
+    note:'y = F(x) + x：梯度高速通道。次年 Transformer 的「Add & Norm」直接继承——切到 Dense 视图看到的琥珀虚线就是它。' },
   { year:2017, view:'orig', name:'Transformer', primary:true,
     paper:'Attention Is All You Need (Vaswani et al.)',
     contrib:'完全基于注意力，抛弃循环与卷积，训练全并行',
@@ -2739,6 +3037,16 @@ const HISTORY = [
     contrib:'辅助头一次预测多步：训练信号更密 + 投机草稿',
     highlights:['autoreg','mtp'],
     note:'多基准 +1.5~3%；推理时 MTP 头直接当 EAGLE 式草稿模型——训练目标与推理加速一鱼两吃。' },
+  { year:2024, view:'attn', name:'DeepSeek-V2/V3（MLA）',
+    paper:'DeepSeek-V2 / DeepSeek-V3 Technical Report (DeepSeek-AI)',
+    contrib:'MLA 潜在压缩 KV Cache 数十倍 + MoE 671B/37B 激活',
+    highlights:['gqa','mla','flash'],
+    note:'KV 压缩线的当前终点：Cache 只存低秩潜在向量；V3 再加无辅助损失均衡与 MTP 训练目标。' },
+  { year:2024, view:'ssm', name:'xLSTM / Mamba-2',
+    paper:'xLSTM: Extended Long Short-Term Memory (Beck et al.) · Transformers are SSMs (Dao & Gu)',
+    contrib:'指数门控矩阵记忆；SSM 与注意力统一为 SSD',
+    highlights:['xlstm','mamba'],
+    note:'LSTM 原作者 27 年后的回应；理论层面线性注意力与 SSM 合流——「混合架构」时代开启。' },
   { year:2025, view:'gen', name:'扩散语言模型',
     paper:'LLaDA: Large Language Diffusion Models · Mercury / Gemini Diffusion (Inception Labs)',
     contrib:'并行去噪生成，正面挑战自回归范式',
@@ -2759,16 +3067,6 @@ const HISTORY = [
     contrib:'测试时神经记忆；深度循环潜推理',
     highlights:['titans','looped','ttt'],
     note:'「思考」从输出 token 转移到架构内部：记忆在测试时继续学习、深度按难度自适应——与 o1 式长思维链互补的两条路。' },
-  { year:2024, view:'attn', name:'DeepSeek-V2/V3（MLA）',
-    paper:'DeepSeek-V2 / DeepSeek-V3 Technical Report (DeepSeek-AI)',
-    contrib:'MLA 潜在压缩 KV Cache 数十倍 + MoE 671B/37B 激活',
-    highlights:['gqa','mla','flash'],
-    note:'KV 压缩线的当前终点：Cache 只存低秩潜在向量；V3 再加无辅助损失均衡与 MTP 训练目标。' },
-  { year:2024, view:'ssm', name:'xLSTM / Mamba-2',
-    paper:'xLSTM: Extended Long Short-Term Memory (Beck et al.) · Transformers are SSMs (Dao & Gu)',
-    contrib:'指数门控矩阵记忆；SSM 与注意力统一为 SSD',
-    highlights:['xlstm','mamba'],
-    note:'LSTM 原作者 27 年后的回应；理论层面线性注意力与 SSM 合流——「混合架构」时代开启。' },
   { year:2025, view:'moe', name:'Qwen3 / Kimi K2',
     paper:'Qwen3 Technical Report (Alibaba) · Kimi K2: Open Agentic Intelligence (Moonshot AI)',
     contrib:'细粒度 MoE 成主流：Qwen3-235B-A22B（128 选 8）；K2 1T 总参 / 32B 激活（MLA）',
@@ -2783,7 +3081,12 @@ const HISTORY = [
     paper:'Kimi Linear: An Expressive, Efficient Attention Architecture (Moonshot AI)',
     contrib:'门控线性注意力 3/4 层 + MLA 1/4 层混合，百万级上下文',
     highlights:['kda','lin','mamba','mla'],
-    note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' }
+    note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' },
+  { year:2025, view:'frontier', name:'Energy-Based Transformers',
+    paper:'Energy-Based Transformers are Scalable Learners (2025)',
+    contrib:'能量函数 + 测试时能量下降做隐式推理',
+    highlights:['ebt','ttt'],
+    note:'把「深思」做进架构：推理 = 能量最小化迭代。与 TTT/Titans 同属测试时计算路线的最新分支，结论尚待大规模验证。' }
 ];
 
 const Timeline = {
@@ -2791,7 +3094,16 @@ const Timeline = {
   render(){
     const ol = document.getElementById('timeline-list');
     ol.innerHTML = '';
+    let lastEra = null;
     HISTORY.forEach(h => {
+      const era = ERAS.find(e => h.year >= e.from && h.year <= e.to) || ERAS[ERAS.length-1];
+      if(era !== lastEra){
+        lastEra = era;
+        const d = document.createElement('li');
+        d.className = 'tl-era';
+        d.innerHTML = '<b>' + era.label + '</b><small>' + era.meaning + '</small>';
+        ol.appendChild(d);
+      }
       const li = document.createElement('li');
       li.className = 'tl-item';
       li.dataset.year = h.year + '_' + h.name;   // 同年多条目不冲突
