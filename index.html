@@ -205,7 +205,7 @@ html[data-theme="dark"] .seg button.on{color:#0f1420;}
 .mv-overlay{position:fixed;inset:0;background:rgba(8,10,18,.55);z-index:90;
   display:none;align-items:center;justify-content:center;padding:24px;}
 .mv-overlay.open{display:flex;}
-.mv-card{background:var(--c-panel);border:1px solid var(--c-border);border-radius:14px;
+.mv-card{background:var(--c-card);border:1px solid var(--c-border);border-radius:14px;
   padding:16px 18px;max-width:min(94vw,980px);max-height:88vh;overflow:auto;
   box-shadow:0 18px 60px rgba(0,0,0,.35);}
 .mv-card h4{margin:0 0 4px;font-size:15px;}
@@ -217,6 +217,10 @@ html[data-theme="dark"] .seg button.on{color:#0f1420;}
 .nv-vec{display:flex;align-items:flex-end;gap:2px;height:64px;margin:4px 0 10px;}
 .nv-vec .nv-bar{flex:1;min-width:3px;border-radius:2px 2px 0 0;}
 .nv-label{font-size:12px;color:var(--c-text-dim);margin-bottom:2px;}
+/* 训练台抽屉 */
+.wt-sec{margin:14px 0 4px;padding-top:12px;border-top:1px dashed var(--c-border);font-size:13.5px;}
+.wt-note{font-size:12.5px;color:var(--c-text-dim);line-height:1.7;margin:6px 0 8px;}
+.wt-note code{background:var(--c-code-bg);padding:1px 5px;border-radius:4px;}
 .arch-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
 .arch-toolbar h3{margin:0;}
 #view-seg button{font-size:12.5px;padding:4px 9px;}
@@ -456,6 +460,45 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
         <div id="nv-body"></div>
       </div>
     </div>
+    <div id="wt-overlay" class="mv-overlay">
+      <div class="mv-card" style="width:min(94vw,620px);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h4>训练台 · 预训练权重与在线微调</h4>
+          <button id="wt-close" class="seg" style="padding:4px 10px;">✕</button>
+        </div>
+        <div class="mv-cap" style="background:var(--c-code-bg);border:1px solid var(--c-border);border-radius:10px;padding:10px 12px;">
+          <b style="font-size:13px;">白话原理（30 秒版）</b><br>
+          ① 模型就是 <b>52 万个权重数字</b>——随机数生成乱码，训练过的数生成莎士比亚。<br>
+          ② <b>训练</b> = 反复「给 96 个字符猜下一个 → 对答案 → 把每个数字朝错得更少的方向挪一点」，本项目的预训练把 loss 从 4.14（瞎猜）降到 1.52。<br>
+          ③ <b>微调</b> = 在训练好的基础上继续练 40 步，亲眼看着 loss 下降——被调的正是你在页面里可视化的那套数字。
+        </div>
+
+        <div class="wt-sec">
+          <b>① 当前状态</b>
+          <div id="wt-state" class="wt-note">随机初始化 —— 生成无语义，仅展示机制。</div>
+        </div>
+
+        <div class="wt-sec">
+          <b>② 加载预训练权重</b>
+          <div class="wt-note">TinyShakespeare 字符级模型（63 词表 · d128/h4/N3 · 4.4MB），
+          由 <code>tools/train.html</code> 在浏览器内训练。加载后 <b>Dense</b> 前向与生成为真实语义，建议输入英文。</div>
+          <button id="btn-pretrain" class="btn" style="width:100%;">⬇ 加载 TinyShakespeare 字符模型</button>
+          <div id="pretrain-status" class="wt-note" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="wt-sec">
+          <b>③ 在线微调（真实反向传播演示）</b>
+          <div class="wt-note">Adam lr=5e-5 · 每步取 4 段×96 字符 · 共 40 步（约 10 秒）。
+          灰线 = 预训练全程 loss 历史；橙线 = 本次微调，在<b>固定验证批</b>上评估（同题考试，逐点可比）。</div>
+          <button id="btn-finetune" class="btn" style="width:100%;" disabled
+            title="对已加载的预训练模型跑真实反向传播（Adam），观察 loss 下降">⚡ 微调 40 步</button>
+          <canvas id="ft-chart" height="96" style="width:100%;display:none;margin-top:8px;border:1px solid var(--c-border);border-radius:8px;"></canvas>
+          <div id="ft-status" class="wt-note" style="margin-top:8px;">
+            加载预训练权重后可用：对页面中可视化的同一套变量跑真实 tf.optimizer 反向传播。
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="subcard" id="detail-panel">
       <div class="dp-empty">点击结构图中任意模块或日志中任意步骤，说明将以右侧抽屉展示（公式 / 形状 / 代码 / 参数量 / 论文线）。</div>
@@ -522,20 +565,10 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       <div id="sm-note" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;"></div>
     </fieldset>
 
-    <fieldset id="fs-pretrain" style="border:1px solid var(--c-border);border-radius:10px;padding:10px 12px;margin-top:12px;">
-      <legend style="font-size:13px;color:var(--c-text-dim);padding:0 4px;">预训练权重</legend>
-      <button id="btn-pretrain" class="btn" style="width:100%;">⬇ 加载 TinyShakespeare 字符模型</button>
-      <div id="pretrain-status" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;">
-        未加载 —— Dense / MoE 演示使用随机初始化权重（生成无语义）。
-        加载后 <b>Dense</b> 视图为真实训练权重（tools/train.html 浏览器内训练产物），生成莎士比亚风格文本。
-      </div>
-      <button id="btn-finetune" class="btn" style="width:100%;margin-top:8px;" disabled
-        title="对已加载的预训练模型跑真实反向传播（Adam），观察 loss 下降">⚡ 在线微调 40 步（反向传播演示）</button>
-      <canvas id="ft-chart" height="96" style="width:100%;display:none;margin-top:8px;border:1px solid var(--c-border);border-radius:8px;"></canvas>
-      <div id="ft-status" style="font-size:12px;color:var(--c-text-dim);margin-top:4px;line-height:1.6;">
-        加载预训练权重后可用：对可视化中的同一套变量跑真实 tf.optimizer 反向传播。
-      </div>
-    </fieldset>
+    <button id="btn-train-studio" class="btn" style="width:100%;margin-top:12px;text-align:left;">
+      🎓 训练台 <span id="train-dot" style="color:var(--c-text-dim);font-weight:400;">· 权重：随机初始化</span>
+      <span style="float:right;color:var(--c-text-dim);">›</span>
+    </button>
 
     <div id="param-summary" style="margin-top:10px;font-size:13px;line-height:1.7;"></div>
 
@@ -3695,6 +3728,30 @@ const AttentionHeatmap = {
   }
 };
 
+/* 训练台抽屉：入口 / 关闭 / 状态同步 */
+function setTrainEntry(text){
+  document.getElementById('train-dot').textContent = '· ' + text;
+}
+function syncTrainStudio(){
+  document.getElementById('wt-state').innerHTML = Pretrained.on
+    ? '✅ 已加载预训练权重（loss ' + Number(Pretrained.info.finalLoss).toFixed(3) +
+      ' · ' + Pretrained.info.trainedSteps + ' 步）—— Dense 视图生成即真实语义。'
+    : '随机初始化 —— 生成无语义，仅展示机制。';
+}
+document.getElementById('btn-train-studio').addEventListener('click', () => {
+  syncTrainStudio();
+  document.getElementById('wt-overlay').classList.add('open');
+  FineTuner.drawChart();          // 抽屉打开时补画（隐藏期间 clientWidth=0 会跳过）
+});
+document.getElementById('wt-close').addEventListener('click',
+  () => document.getElementById('wt-overlay').classList.remove('open'));
+document.getElementById('wt-overlay').addEventListener('click', e => {
+  if(e.target.id === 'wt-overlay') e.target.classList.remove('open');
+});
+window.addEventListener('keydown', e => {
+  if(e.key === 'Escape') document.getElementById('wt-overlay').classList.remove('open');
+});
+
 /* Model View / Neuron View 控件接线 */
 document.getElementById('btn-model-view').addEventListener('click',
   () => AttentionHeatmap.showModelView());
@@ -4106,6 +4163,8 @@ window.addEventListener('config-changed', () => {
     if(b) b.textContent = '⬇ 重新加载 TinyShakespeare 字符模型';
     const fb = document.getElementById('btn-finetune');
     if(fb) fb.disabled = true;
+    setTrainEntry('权重：随机初始化');
+    syncTrainStudio();
     renderTokenChips();
   }
 });
@@ -4157,6 +4216,8 @@ async function loadPretrained(){
       Number(w.meta.finalLoss).toFixed(3) +
       '（TinyShakespeare 400KB · d128/h4/N3）。<b>Dense</b> 前向与生成即真实语义，建议输入英文。';
     btn.textContent = '↻ 重新加载预训练权重';
+    setTrainEntry('权重：预训练 ✓（loss ' + Number(w.meta.finalLoss).toFixed(2) + '）');
+    syncTrainStudio();
     document.getElementById('btn-finetune').disabled = false;
     FineTuner.baseHist = []; FineTuner.liveHist = [];
     document.getElementById('ft-chart').style.display = 'none';
@@ -4188,11 +4249,11 @@ const FineTuner = {
     }
   },
 
-  /** 画 loss 曲线：baseHist 全程 + liveHist 接续 */
+  /** 画 loss 曲线：baseHist 全程 + liveHist 接续（画布不可见时跳过，开抽屉时补画） */
   drawChart(){
     const cv = document.getElementById('ft-chart');
     const all = this.baseHist.concat(this.liveHist);
-    if(all.length < 2){ cv.style.display = 'none'; return; }
+    if(all.length < 2 || cv.clientWidth === 0){ return; }
     cv.style.display = 'block';
     const W = cv.width = cv.clientWidth * 2, H = cv.height = 192;
     const ctx = cv.getContext('2d');
