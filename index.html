@@ -360,6 +360,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
           <button data-view="ssm" title="线性注意力与状态空间：Linear Transformer→RWKV/xLSTM→S4→Mamba→Kimi Linear">线性·SSM</button>
           <button data-view="gen" title="自回归 vs MTP vs 扩散 LM vs 投机解码">生成范式</button>
           <button data-view="frontier" title="BLT 字节级 / 记忆层 / TTT·Titans / 深度循环 / 多模态">前沿探索</button>
+          <button data-view="train" title="预训练→SFT→RLHF/DPO/可验证奖励 RL + 缩放定律">训练·对齐</button>
         </span>
       </div>
       <svg id="arch-svg" role="img" aria-label="Transformer 架构演进结构图"></svg>
@@ -1853,6 +1854,84 @@ const MODULE_DETAILS = {
     refs: ['Liu et al. 2023 · Visual Instruction Tuning (LLaVA)',
            'Chameleon Team 2024 · Mixed-Modal Early-Fusion Foundation Models',
            'Bai et al. 2023 · Qwen-VL']
+  },
+
+  /* ============ 训练与对齐 ============ */
+  'pretrain': {
+    title: '预训练（Pre-training）',
+    desc: 'LLM 三阶段的第一阶段：在海量无标注文本上做自监督学习——Decoder 系用下一词预测（NTP），BERT 用掩码语言模型（MLM），T5 用 span corruption。语言、知识、基础推理能力全部来自这里；后续对齐阶段只塑造行为，基本不注入新能力（「对齐税」讨论即源于此）。',
+    latex: [
+      'L_{\\text{NTP}}=-\\sum_t \\log P(y_t\\mid y_{<t}),\\quad L_{\\text{MLM}}=-\\sum_{t\\in M}\\log P(x_t\\mid x_{\\setminus M})'
+    ],
+    shapes: ['语料 ~10T token → 批次 [B, L]','算力 ~10^25 FLOPs 量级'],
+    code: "// 混合 NTP（Decoder）/MLM（Encoder）/span（T5）\nconst loss = tf.losses.softmaxCrossEntropy(oneHot(next), logits);",
+    params: '全部模型参数在此阶段学习',
+    refs: ['Radford et al. 2018/2019 · GPT 系列', 'Devlin et al. 2018 · BERT',
+           'Raffel et al. 2019 · T5']
+  },
+  'sft': {
+    title: 'SFT 指令微调（Supervised Fine-Tuning）',
+    desc: '第二阶段：用人类撰写的「指令 → 回答」示范对做监督微调（损失函数与预训练相同，数据变了）。让基座从「会续写」变成「会听指令」。FLAN/T0 证明指令泛化可迁移到未见任务；LIMA 进一步证明对齐强基座只需 ~1000 条高质量示范——数据质量远重于数量。',
+    latex: [
+      'L_{\\text{SFT}}=-\\sum_t \\log p(y_t\\mid \\text{instruction},\\, y_{<t})'
+    ],
+    shapes: ['示范对 (指令, 回答) ~1k~1M 条','与预训练同构，仅换数据'],
+    code: "// 与预训练同一损失，数据换成指令示范对\nfor (const {prompt, answer} of sftData) loss += ce(model(prompt), answer);",
+    params: '全参微调或 LoRA（低秩旁路）',
+    refs: ['Wei et al. 2021 · Finetuned Language Models are Zero-Shot Learners (FLAN)',
+           'Sanh et al. 2021 · Multitask Prompted Training (T0)',
+           'Ouyang et al. 2022 · InstructGPT',
+           'Zhou et al. 2023 · LIMA: Less Is More for Alignment']
+  },
+  'rlhf': {
+    title: 'RLHF 人类反馈强化学习',
+    desc: '第三阶段（对齐）：①人类对同一提示的多个回答排序 → 训练奖励模型 r(x,y)；②用 PPO 以奖励为信号更新策略，同时用 KL 惩罚锚住 SFT 分布，防止模型钻奖励模型空子（reward hacking）。ChatGPT 的直接来源：让模型从「会补全」变成「有帮助、诚实、无害」的对话者。',
+    latex: [
+      '\\max_\\theta\\; \\mathbb{E}_{x\\sim D,\\,y\\sim\\pi_\\theta}\\big[r(x,y)\\big] - \\beta\\,\\mathrm{KL}\\big(\\pi_\\theta\\|\\pi_{\\text{SFT}}\\big)'
+    ],
+    shapes: ['偏好对 (x, y_w, y_l) → 奖励模型','PPO：策略/价值/奖励/参考 四模型'],
+    code: "for (const {x, y} of ppoSamples) {\n  const adv = reward(x, y) - beta * kl(policy(x,y), ref(x,y));\n  update(policy, adv);   // PPO 裁剪目标\n}",
+    params: '奖励模型 + 策略 + 参考（~3-4 倍推理参数）',
+    refs: ['Ziegler et al. 2019 · Fine-Tuning Language Models from Human Preferences',
+           'Ouyang et al. 2022 · Training language models to follow instructions (InstructGPT)',
+           'Bai et al. 2022 · Training a Helpful and Harmless Assistant (Anthropic)']
+  },
+  'dpo': {
+    title: 'DPO 直接偏好优化（2023）',
+    desc: '把 RLHF 的「奖励模型 + PPO」两步折叠为一步：从偏好对出发的闭式变换证明，最优奖励可用策略与参考模型的对数比表示——于是对齐变成一个简单的分类式损失，无需采样、无需显式奖励模型，稳定性与实现难度大幅下降。变体：IPO、KTO、ORPO；工业界 RLHF/DPO 并存。',
+    latex: [
+      'L_{\\text{DPO}}=-\\log\\,\\sigma\\!\\Big(\\beta\\log\\frac{\\pi_\\theta(y_w|x)}{\\pi_{\\text{ref}}(y_w|x)}-\\beta\\log\\frac{\\pi_\\theta(y_l|x)}{\\pi_{\\text{ref}}(y_l|x)}\\Big)'
+    ],
+    shapes: ['输入即偏好对 (x, y_w, y_l)','单模型 + 参考副本'],
+    code: "const logRatio = (y) => policy(x, y) - ref(x, y);   // log π/π_ref\nconst loss = -sigmoid(beta * (logRatio(yw) - logRatio(yl)));",
+    params: '策略 + 冻结参考（2 倍推理参数，无奖励模型）',
+    refs: ['Rafailov et al. 2023 · Direct Preference Optimization',
+           'Hong et al. 2024 · ORPO', 'Ethayarajh et al. 2024 · KTO']
+  },
+  'rlvr': {
+    title: '可验证奖励 RL（R1 式推理训练，2024-25）',
+    desc: '对齐之后的新浪潮：数学、代码等有客观答案的领域，用「可验证奖励」（答案比对、单元测试通过）做强化学习，模型自发学会长思维链、反思与验证。DeepSeek-R1 证明纯 RL（GRPO：组内相对优势替代 critic）即可涌现推理行为；OpenAI o1 系列为闭源先声——「测试时计算」由此有了训练侧的根基。',
+    latex: [
+      'R=\\mathbb{1}[\\text{answer correct}],\\quad \\text{GRPO: } A_i=\\frac{r_i-\\text{mean}(r)}{\\text{std}(r)}\\ (\\text{组内相对})'
+    ],
+    shapes: ['提示 → 长思维链 → 可验证答案',' rollout 长度可达数万 token'],
+    code: "for (const x of batch) {\n  const rs = sampleN(policy, x, G).map(y => verify(x, y)); // 0/1\n  const adv = (rs - mean(rs)) / std(rs);                    // GRPO\n  update(policy, adv);\n}",
+    params: '策略 + 参考（无 critic）',
+    refs: ['DeepSeek-AI 2025 · DeepSeek-R1: Incentivizing Reasoning via RL',
+           'Shao et al. 2024 · DeepSeekMath (GRPO)',
+           'OpenAI 2024 · Learning to Reason with LLMs (o1)']
+  },
+  'scaling': {
+    title: '缩放定律（Scaling Laws）',
+    desc: 'LLM 时代的底层规律：验证损失随参数量 N、数据量 D、算力 C 的幂律平滑下降，可跨数量级外推。Kaplan 2020 给出首组公式；Chinchilla 2022 修正：给定算力，参数与数据应「等比扩展」（70B 配 1.4T token），直接改写了行业训练配方——也解释了 MoE（同等算力换更多参数）与高质量数据竞赛的兴起。',
+    latex: [
+      'L(N)=L_\\infty+\\Big(\\frac{N_c}{N}\\Big)^{\\alpha},\\quad \\text{Chinchilla: } N_{\\text{opt}},D_{\\text{opt}}\\propto\\sqrt{C}'
+    ],
+    shapes: ['损失-规模 双对数直线','可提前预测大模型性能'],
+    code: "// 用小模型系列拟合幂律，再外推目标规模\nconst {alpha, Nc} = fitPowerLaw(sizes, losses);\nconst lossBig = Linf + Math.pow(Nc / N_big, alpha);",
+    params: '拟合参数 α、N_c（非模型参数）',
+    refs: ['Kaplan et al. 2020 · Scaling Laws for Neural Language Models',
+           'Hoffmann et al. 2022 · Training Compute-Optimal Large Language Models (Chinchilla)']
   }
 };
 
@@ -2273,6 +2352,44 @@ const ARCH_VIEW_FRONTIER = {
   residuals: []
 };
 
+/* ---- 视图：训练与对齐（预训练 → SFT → RLHF/DPO/RL + 缩放定律） ---- */
+const ARCH_VIEW_TRAIN = {
+  colTitles: [
+    { x:330, y:60,  text:'三阶段范式：预训练 → 指令微调 → 对齐' },
+    { x:330, y:200, text:'关键分支与底层规律' }
+  ],
+  nodes: [
+    { id:'pretrain', x:24, y:100, label:'预训练 Pre-training',
+      sub:'自监督 NTP/MLM · 万亿 token', detail:'pretrain',
+      tip:'语言/知识/推理底子的来源；对齐阶段不注入新能力' },
+    { id:'sft', x:282, y:100, label:'SFT 指令微调',
+      sub:'2021/22 · 人类示范监督学习', detail:'sft',
+      tip:'让基座「听懂指令」；数据质量 >> 数量（LIMA）' },
+    { id:'rlhf', x:540, y:100, label:'RLHF 强化学习',
+      sub:'2022 · 奖励模型 + PPO 对齐', detail:'rlhf',
+      tip:'从「会补全」到「会对话」——ChatGPT 的直接来源' },
+    { id:'scaling', x:24, y:240, label:'缩放定律',
+      sub:'2020/22 · Kaplan / Chinchilla', detail:'scaling',
+      tip:'损失随规模幂律下降；参数与数据等比扩展' },
+    { id:'rlvr', x:282, y:240, label:'可验证奖励 RL',
+      sub:'2024-25 · R1 式长推理链训练', detail:'rlvr',
+      tip:'数学/代码用标准答案做奖励；GRPO 免 critic' },
+    { id:'dpo', x:540, y:240, label:'DPO 直接偏好优化',
+      sub:'2023 · 免显式奖励模型', detail:'dpo',
+      tip:'把 RLHF 两步折叠为一步分类式损失' }
+  ],
+  frames: [],
+  edges: [],
+  special: [
+    { d:'M 220 121 L 282 121' },   /* pretrain → sft */
+    { d:'M 478 121 L 540 121' },   /* sft → rlhf */
+    { d:'M 122 162 L 122 238' },   /* pretrain ↓ scaling */
+    { d:'M 380 162 L 380 238' },   /* sft ↓ rlvr */
+    { d:'M 638 162 L 638 238' }    /* rlhf ↓ dpo */
+  ],
+  residuals: []
+};
+
 /** 视图注册表：id → 布局（orig 复用模块8 的常量） */
 const ARCH_VIEWS = {
   pre:   ARCH_VIEW_PRE,
@@ -2284,7 +2401,8 @@ const ARCH_VIEWS = {
   attn:  ARCH_VIEW_ATTN,
   ssm:   ARCH_VIEW_SSM,
   gen:   ARCH_VIEW_GEN,
-  frontier: ARCH_VIEW_FRONTIER
+  frontier: ARCH_VIEW_FRONTIER,
+  train: ARCH_VIEW_TRAIN
 };
 /** 节点 id → 模块详情键（步骤解释时把 moduleId 映射到 MODULE_DETAILS） */
 const NODE2DETAIL = {};
@@ -2511,6 +2629,11 @@ const HISTORY = [
     contrib:'一切任务皆文本到文本，Encoder-Decoder 规模化验证',
     highlights:['input','embed','enc-mha','dec-cross','out'],
     note:'Encoder-Decoder 路线的集大成者（11B）；翻译/摘要等有「输入-输出」结构的任务至今仍常用此范式。' },
+  { year:2019, view:'train', name:'RLHF 起源',
+    paper:'Fine-Tuning Language Models from Human Preferences (Ziegler et al.)',
+    contrib:'首次系统化：人类偏好 → 奖励 → 强化学习',
+    highlights:['rlhf'],
+    note:'OpenAI 与 Anthropic 共同的起点：让模型对齐人类偏好，比「训得更大」早了三年。' },
   { year:2019, view:'attn', name:'MQA 多查询注意力',
     paper:'Fast Transformer Decoding: One Write-Head is All You Need (Shazeer)',
     contrib:'全头共享一组 KV，推理 Cache 骤降 h 倍',
@@ -2521,6 +2644,11 @@ const HISTORY = [
     contrib:'1750 亿参数，上下文少样本学习（few-shot）',
     highlights:['dec-input','dec-masked-mha','out','outp'],
     note:'结构与 GPT-2 相同，靠规模涌现出上下文学习——大模型时代的起点（ChatGPT 即其 RLHF 后代）。' },
+  { year:2020, view:'train', name:'缩放定律',
+    paper:'Scaling Laws for Neural Language Models (Kaplan et al.)',
+    contrib:'损失随参数/数据/算力幂律下降，可跨数量级外推',
+    highlights:['scaling'],
+    note:'「大力出奇迹」的定量依据：训练前就能预测大模型性能——2022 年 Chinchilla 修正为参数与数据等比扩展。' },
   { year:2020, view:'orig', name:'ViT（跨界）',
     paper:'An Image is Worth 16x16 Words (Dosovitskiy et al.)',
     contrib:'图像切 patch 当 token：Transformer 统一视觉',
@@ -2541,6 +2669,21 @@ const HISTORY = [
     contrib:'HiPPO + 结构化 SSM，长序列基准横扫',
     highlights:['s4'],
     note:'状态空间模型回归：连续系统离散化，训练当卷积、推理当 RNN——Mamba 的直系前身。' },
+  { year:2021, view:'train', name:'FLAN 指令微调',
+    paper:'Finetuned Language Models are Zero-Shot Learners (Wei et al.)',
+    contrib:'指令化任务数据 → 未见任务零样本泛化',
+    highlights:['sft','pretrain'],
+    note:'「指令微调有效」的奠基工作：SFT 阶段由此成为标配，直接催生 InstructGPT 三阶段范式。' },
+  { year:2022, view:'train', name:'InstructGPT / ChatGPT',
+    paper:'Training language models to follow instructions with human feedback (Ouyang et al.)',
+    contrib:'SFT → RLHF → PPO 三阶段范式确立',
+    highlights:['sft','rlhf','pretrain'],
+    note:'1.3B 的 InstructGPT 在人类偏好上胜过 175B 的 GPT-3——「对齐比规模更重要」的标志性证据；同年 11 月 ChatGPT 上线。' },
+  { year:2022, view:'train', name:'Chinchilla',
+    paper:'Training Compute-Optimal Large Language Models (Hoffmann et al.)',
+    contrib:'参数与数据应等比扩展（70B ↔ 1.4T token）',
+    highlights:['scaling'],
+    note:'修正 Kaplan 定律的训练配方：同期大多数模型都「数据喂少了」——直接改写此后所有旗舰模型的训练预算分配。' },
   { year:2022, view:'attn', name:'FlashAttention',
     paper:'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao et al.)',
     contrib:'分块在线 softmax：精确注意力显存 O(L²)→O(L)',
@@ -2576,6 +2719,11 @@ const HISTORY = [
     contrib:'滑动窗口注意力：长文本推理 Cache O(L)→O(w)',
     highlights:['swa','flash'],
     note:'GQA+SWA 组合让 7B 小模型也能跑长文；StreamingLLM 的 attention sinks 解释了首 token 的「注意力黑洞」现象。' },
+  { year:2023, view:'train', name:'DPO 直接偏好优化',
+    paper:'Direct Preference Optimization (Rafailov et al.)',
+    contrib:'免奖励模型、免 RL 采样的偏好对齐',
+    highlights:['dpo','rlhf'],
+    note:'把 RLHF 两步折叠为一步分类式损失：开源社区的对齐门槛骤降，此后 RLHF/DPO 并存互补。' },
   { year:2024, view:'frontier', name:'TTT 层 / 记忆层',
     paper:'Learning to (Learn at Test Time) (Sun et al.) · Memory Layers at Scale (Meta)',
     contrib:'隐藏状态=在线学习器；稀疏键值记忆替换 FFN',
@@ -2601,6 +2749,11 @@ const HISTORY = [
     contrib:'QK-Norm + 门控注意力 + 5:1 局部/全局 + 多模态',
     highlights:['qknorm','swa'],
     note:'训练稳定化三件套（QK-Norm/soft-cap/z-loss）成为百B级训练的隐形基石——不改变数学，只保证「训得动」。' },
+  { year:2025, view:'train', name:'DeepSeek-R1（可验证奖励 RL）',
+    paper:'DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via RL (DeepSeek-AI)',
+    contrib:'纯 RL（GRPO）自发涌现长思维链与反思',
+    highlights:['rlvr','rlhf','dpo'],
+    note:'「会推理」第一次被证明可以从可验证奖励的强化学习中长出来，而非只靠监督示范——训练范式的新分水岭。' },
   { year:2025, view:'frontier', name:'Titans / 潜空间推理',
     paper:'Titans: Learning to Memorize at Test Time (Google) · Reasoning by Latent Space (Huginnet)',
     contrib:'测试时神经记忆；深度循环潜推理',
