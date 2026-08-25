@@ -202,7 +202,7 @@ html[data-theme="dark"] .tl-era{background:rgba(140,158,255,.08);}
 .seg button.on{background:var(--c-primary);color:#fff;}
 html[data-theme="dark"] .seg button.on{color:#0f1420;}
 /* Model View（全层×头总览）与 Neuron View（Q·K 分解）浮层 */
-.mv-overlay{position:fixed;inset:0;background:rgba(8,10,18,.55);z-index:90;
+.mv-overlay{position:fixed;inset:0;background:rgba(8,10,18,.55);z-index:160;
   display:none;align-items:center;justify-content:center;padding:24px;}
 .mv-overlay.open{display:flex;}
 .mv-card{background:var(--c-card);border:1px solid var(--c-border);border-radius:14px;
@@ -218,9 +218,34 @@ html[data-theme="dark"] .seg button.on{color:#0f1420;}
 .nv-vec .nv-bar{flex:1;min-width:3px;border-radius:2px 2px 0 0;}
 .nv-label{font-size:12px;color:var(--c-text-dim);margin-bottom:2px;}
 /* 训练台抽屉 */
-.wt-sec{margin:14px 0 4px;padding-top:12px;border-top:1px dashed var(--c-border);font-size:13.5px;}
-.wt-note{font-size:12.5px;color:var(--c-text-dim);line-height:1.7;margin:6px 0 8px;}
+.wt-sec{margin:16px 0 4px;padding-top:14px;border-top:1px dashed var(--c-border);font-size:13.5px;}
+.wt-note{font-size:12.5px;color:var(--c-text-dim);line-height:1.7;margin:6px 0 10px;}
 .wt-note code{background:var(--c-code-bg);padding:1px 5px;border-radius:4px;}
+.wt-card{width:min(94vw,600px);}
+.wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+  padding:2px 2px 14px;border-bottom:2px solid var(--c-primary);}
+.wt-sub{font-size:12.5px;color:var(--c-text-dim);margin-top:4px;}
+.wt-x{border:1px solid var(--c-border);background:var(--c-bg);color:var(--c-text-dim);
+  border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px;flex:none;}
+.wt-x:hover{color:var(--c-text);border-color:var(--c-text-dim);}
+.wt-hero{display:flex;gap:10px;margin:14px 0 4px;}
+.wt-stat{flex:1;background:var(--c-bg);border:1px solid var(--c-border);border-radius:10px;
+  padding:10px 12px;display:flex;flex-direction:column;gap:2px;}
+.wt-num{font-size:19px;font-weight:700;font-family:var(--font-mono);color:var(--c-text);}
+.wt-arrow{color:var(--c-text-dim);font-style:normal;font-weight:400;}
+.wt-good{color:var(--c-ok);}
+.wt-cap{font-size:11.5px;color:var(--c-text-dim);}
+.wt-title{font-weight:700;font-size:13.5px;margin-bottom:2px;}
+.wt-title::before{content:'';display:inline-block;width:4px;height:13px;border-radius:2px;
+  background:var(--c-primary);margin-right:7px;vertical-align:-1px;}
+.wt-btn{width:100%;padding:9px 14px;font-size:13.5px;border-radius:9px;}
+.wt-btn-accent{background:var(--c-accent);border-color:var(--c-accent);color:#fff;}
+.wt-btn-accent:disabled{opacity:.45;cursor:not-allowed;}
+html[data-theme="dark"] .wt-btn-accent{color:#1a1206;}
+.wt-lg{display:inline-flex;align-items:center;gap:5px;margin-right:10px;white-space:nowrap;}
+.wt-dot{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:2px;}
+.wt-chart-empty{border:1px dashed var(--c-border);border-radius:10px;background:var(--c-bg);
+  color:var(--c-text-dim);font-size:12.5px;text-align:center;padding:34px 12px;margin-bottom:10px;}
 .arch-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
 .arch-toolbar h3{margin:0;}
 #view-seg button{font-size:12.5px;padding:4px 9px;}
@@ -461,41 +486,41 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       </div>
     </div>
     <div id="wt-overlay" class="mv-overlay">
-      <div class="mv-card" style="width:min(94vw,620px);">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h4>训练台 · 预训练权重与在线微调</h4>
-          <button id="wt-close" class="seg" style="padding:4px 10px;">✕</button>
-        </div>
-        <div class="mv-cap" style="background:var(--c-code-bg);border:1px solid var(--c-border);border-radius:10px;padding:10px 12px;">
-          <b style="font-size:13px;">白话原理（30 秒版）</b><br>
-          ① 模型就是 <b>52 万个权重数字</b>——随机数生成乱码，训练过的数生成莎士比亚。<br>
-          ② <b>训练</b> = 反复「给 96 个字符猜下一个 → 对答案 → 把每个数字朝错得更少的方向挪一点」，本项目的预训练把 loss 从 4.14（瞎猜）降到 1.52。<br>
-          ③ <b>微调</b> = 在训练好的基础上继续练 40 步，亲眼看着 loss 下降——被调的正是你在页面里可视化的那套数字。
-        </div>
-
-        <div class="wt-sec">
-          <b>① 当前状态</b>
-          <div id="wt-state" class="wt-note">随机初始化 —— 生成无语义，仅展示机制。</div>
-        </div>
-
-        <div class="wt-sec">
-          <b>② 加载预训练权重</b>
-          <div class="wt-note">TinyShakespeare 字符级模型（63 词表 · d128/h4/N3 · 4.4MB），
-          由 <code>tools/train.html</code> 在浏览器内训练。加载后 <b>Dense</b> 前向与生成为真实语义，建议输入英文。</div>
-          <button id="btn-pretrain" class="btn" style="width:100%;">⬇ 加载 TinyShakespeare 字符模型</button>
-          <div id="pretrain-status" class="wt-note" style="margin-top:8px;"></div>
-        </div>
-
-        <div class="wt-sec">
-          <b>③ 在线微调（真实反向传播演示）</b>
-          <div class="wt-note">Adam lr=5e-5 · 每步取 4 段×96 字符 · 共 40 步（约 10 秒）。
-          灰线 = 预训练全程 loss 历史；橙线 = 本次微调，在<b>固定验证批</b>上评估（同题考试，逐点可比）。</div>
-          <button id="btn-finetune" class="btn" style="width:100%;" disabled
-            title="对已加载的预训练模型跑真实反向传播（Adam），观察 loss 下降">⚡ 微调 40 步</button>
-          <canvas id="ft-chart" height="96" style="width:100%;display:none;margin-top:8px;border:1px solid var(--c-border);border-radius:8px;"></canvas>
-          <div id="ft-status" class="wt-note" style="margin-top:8px;">
-            加载预训练权重后可用：对页面中可视化的同一套变量跑真实 tf.optimizer 反向传播。
+      <div class="mv-card wt-card">
+        <div class="wt-head">
+          <div>
+            <h4 style="margin:0;font-size:17px;">训练台</h4>
+            <div class="wt-sub">把「一堆随机数字」变成「会写莎士比亚的模型」——全程发生在你的浏览器里</div>
           </div>
+          <button id="wt-close" class="wt-x">✕</button>
+        </div>
+
+        <div class="wt-hero">
+          <div class="wt-stat"><span class="wt-num">525K</span><span class="wt-cap">可训练参数</span></div>
+          <div class="wt-stat"><span class="wt-num">63</span><span class="wt-cap">字符词表</span></div>
+          <div class="wt-stat"><span class="wt-num">4.14 <span class="wt-arrow">→</span> <b class="wt-good">1.52</b></span><span class="wt-cap">训练 loss（瞎猜 → 学成）</span></div>
+        </div>
+        <div id="wt-state" class="wt-note" style="margin:10px 2px 0;"></div>
+
+        <div class="wt-sec">
+          <div class="wt-title">① 加载预训练权重</div>
+          <div class="wt-note"><code>tools/train.html</code> 在浏览器内训练的 TinyShakespeare 字符级模型，
+          架构与本页可视化<b>逐算子一致</b>。加载后 <b>Dense</b> 视图生成真实文本，建议输入英文。</div>
+          <button id="btn-pretrain" class="btn wt-btn">⬇ 加载权重文件（4.4MB，首次后浏览器缓存）</button>
+          <div id="pretrain-status" class="wt-note"></div>
+        </div>
+
+        <div class="wt-sec">
+          <div class="wt-title">② 在线微调 · 亲眼看着 loss 下降</div>
+          <div class="wt-note">对已加载的权重继续训练 40 步（Adam lr=5e-5 · 每步 4 段×96 字符 · 约 10 秒）。
+          <span class="wt-lg"><i class="wt-dot" style="background:#7a86a0;"></i>预训练全程</span>
+          <span class="wt-lg"><i class="wt-dot" style="background:var(--c-accent);"></i>本次微调</span>
+          ——固定验证批「同题考试」，逐点可比。微调完重新生成可见差异。</div>
+          <div id="ft-chart-empty" class="wt-chart-empty">加载权重后，这里会画出完整的训练 loss 曲线</div>
+          <canvas id="ft-chart" style="width:100%;display:none;border:1px solid var(--c-border);border-radius:10px;"></canvas>
+          <button id="btn-finetune" class="btn wt-btn wt-btn-accent" disabled
+            title="对已加载的预训练模型跑真实反向传播（Adam）">⚡ 微调 40 步</button>
+          <div id="ft-status" class="wt-note"></div>
         </div>
       </div>
     </div>
@@ -4219,8 +4244,9 @@ async function loadPretrained(){
     setTrainEntry('权重：预训练 ✓（loss ' + Number(w.meta.finalLoss).toFixed(2) + '）');
     syncTrainStudio();
     document.getElementById('btn-finetune').disabled = false;
-    FineTuner.baseHist = []; FineTuner.liveHist = [];
-    document.getElementById('ft-chart').style.display = 'none';
+    FineTuner.baseHist = w.meta.lossHist || [];   /* 加载即有图：训练全程曲线 */
+    FineTuner.liveHist = [];
+    FineTuner.drawChart();
     document.getElementById('ft-status').textContent =
       '已就绪：点击上方按钮对同一套变量跑真实反向传播（约 10 秒）。';
     document.getElementById('input-text').value = 'First Citizen:\nWe are resolved.';
@@ -4249,34 +4275,62 @@ const FineTuner = {
     }
   },
 
-  /** 画 loss 曲线：baseHist 全程 + liveHist 接续（画布不可见时跳过，开抽屉时补画） */
+  /** 画 loss 曲线：网格坐标轴 + 面积填充 + 图例（抽屉关闭时盲画，开启时由入口补画） */
   drawChart(){
     const cv = document.getElementById('ft-chart');
-    const all = this.baseHist.concat(this.liveHist);
-    if(all.length < 2 || cv.clientWidth === 0){ return; }
-    cv.style.display = 'block';
-    const W = cv.width = cv.clientWidth * 2, H = cv.height = 192;
+    const empty = document.getElementById('ft-chart-empty');
+    const base = this.baseHist, live = this.liveHist;
+    const hasData = base.length >= 2;
+    empty.style.display = hasData ? 'none' : '';
+    if(!hasData){ cv.style.display = 'none'; return; }
+    cv.style.display = 'block';   /* 先显示再测量（display:none 时 clientWidth=0） */
+    const W = cv.width = Math.max(cv.clientWidth, 300) * 2, H = cv.height = 260;
     const ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, W, H);
-    const mx = Math.max(...all), mn = Math.min(...all);
-    const X = i => i / (all.length - 1) * (W - 16) + 8;
-    const Y = v => H - 14 - (v - mn) / (mx - mn || 1) * (H - 28);
-    const line = (arr, off, color, wd) => {
-      ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.beginPath();
-      arr.forEach((v, i) => {
-        const x = X(off + i), y = Y(v);
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      });
-      ctx.stroke();
-    };
-    line(this.baseHist, 0, 'rgba(128,138,160,.55)', 2);
-    if(this.liveHist.length){
-      const off = Math.max(0, this.baseHist.length - 1);
-      line([this.baseHist[off], ...this.liveHist], off, '#e07a2f', 3);
+    const hasLive = live.length > 0;
+    const data = hasLive ? base.concat(live) : base;
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue('--c-accent').trim() || '#ff6f00';
+    const padL = 64, padR = 18, padT = 40, padB = 40;
+    let mx = Math.max(...data), mn = Math.min(...data);
+    const span = (mx - mn) || 1; mx += span * .06; mn -= span * .06;
+    const X = i => padL + i / (data.length - 1) * (W - padL - padR);
+    const Y = v => padT + (1 - (v - mn) / (mx - mn)) * (H - padT - padB);
+    /* 网格 + Y 轴刻度 */
+    ctx.font = '18px monospace';
+    for(let g = 0; g <= 3; g++){
+      const v = mn + (mx - mn) * g / 3, y = Y(v);
+      ctx.strokeStyle = 'rgba(122,134,160,.18)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.fillStyle = '#7a86a0'; ctx.textAlign = 'right';
+      ctx.fillText(v.toFixed(2), padL - 10, y + 6);
     }
-    ctx.fillStyle = 'rgba(128,138,160,.9)';
-    ctx.font = '20px monospace';
-    ctx.fillText('loss ' + all[all.length - 1].toFixed(3), 12, 26);
+    const area = (arr, off, color) => {
+      ctx.beginPath(); ctx.moveTo(X(off), H - padB);
+      arr.forEach((v, i) => ctx.lineTo(X(off + i), Y(v)));
+      ctx.lineTo(X(off + arr.length - 1), H - padB); ctx.closePath();
+      ctx.fillStyle = color; ctx.fill();
+    };
+    const line = (arr, off, color, wd) => {
+      ctx.beginPath();
+      arr.forEach((v, i) => i ? ctx.lineTo(X(off + i), Y(v)) : ctx.moveTo(X(off), Y(v)));
+      ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.lineJoin = 'round'; ctx.stroke();
+    };
+    area(base, 0, 'rgba(122,134,160,.10)');
+    line(base, 0, '#7a86a0', 3);
+    if(hasLive){
+      const off = base.length - 1;
+      area([base[off], ...live], off, 'rgba(255,111,0,.14)');
+      line([base[off], ...live], off, accent, 4);
+      ctx.beginPath();
+      ctx.arc(X(data.length - 1), Y(live[live.length - 1]), 5, 0, 7);
+      ctx.fillStyle = accent; ctx.fill();
+    }
+    /* X 轴 + 当前值标注 */
+    ctx.fillStyle = '#7a86a0';
+    ctx.textAlign = 'left';  ctx.fillText('step 0', padL, H - 12);
+    ctx.textAlign = 'right'; ctx.fillText('step ' + (data.length - 1), W - padR, H - 12);
+    ctx.fillText('loss ' + data[data.length - 1].toFixed(3), W - padR, 24);
   },
 
   async run(){
