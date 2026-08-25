@@ -4,7 +4,7 @@
   Transformer 架构演进交互式可视化学习应用
   作者：atituiset
   日期：2026-08-24
-  版本：v2.2.0
+  版本：v2.3.0
   说明：单文件纯前端应用。六大架构视图（前史 RNN→2017 / 原版
         Enc-Dec / Decoder-Only Dense / MoE / Attention 演进 / SSM）
         + 1990→2025 论文线时间轴。TensorFlow.js 完成前向推理模拟，
@@ -201,6 +201,22 @@ html[data-theme="dark"] .tl-era{background:rgba(140,158,255,.08);}
 }
 .seg button.on{background:var(--c-primary);color:#fff;}
 html[data-theme="dark"] .seg button.on{color:#0f1420;}
+/* Model View（全层×头总览）与 Neuron View（Q·K 分解）浮层 */
+.mv-overlay{position:fixed;inset:0;background:rgba(8,10,18,.55);z-index:90;
+  display:none;align-items:center;justify-content:center;padding:24px;}
+.mv-overlay.open{display:flex;}
+.mv-card{background:var(--c-panel);border:1px solid var(--c-border);border-radius:14px;
+  padding:16px 18px;max-width:min(94vw,980px);max-height:88vh;overflow:auto;
+  box-shadow:0 18px 60px rgba(0,0,0,.35);}
+.mv-card h4{margin:0 0 4px;font-size:15px;}
+.mv-cap{font-size:12px;color:var(--c-text-dim);margin-bottom:10px;line-height:1.6;}
+.mv-grid{display:grid;gap:6px;}
+.mv-cell{cursor:pointer;border-radius:6px;outline:1px solid var(--c-border);display:block;}
+.mv-cell:hover{outline:2px solid var(--c-primary);}
+.mv-axis{font-size:11px;color:var(--c-text-dim);display:flex;align-items:center;justify-content:center;}
+.nv-vec{display:flex;align-items:flex-end;gap:2px;height:64px;margin:4px 0 10px;}
+.nv-vec .nv-bar{flex:1;min-width:3px;border-radius:2px 2px 0 0;}
+.nv-label{font-size:12px;color:var(--c-text-dim);margin-bottom:2px;}
 .arch-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
 .arch-toolbar h3{margin:0;}
 #view-seg button{font-size:12.5px;padding:4px 9px;}
@@ -354,7 +370,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
 <header id="topbar">
   <h1>Transformer 架构演进交互式可视化</h1>
-  <span id="version-tag">v2.2.0</span>
+  <span id="version-tag">v2.3.0</span>
   <span class="spacer"></span>
   <button id="theme-toggle" class="btn" title="切换深浅主题">🌙 深色模式</button>
 </header>
@@ -409,9 +425,35 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
             <button data-kind="cross">交叉注意力</button>
           </span>
           <select id="layer-select" style="display:none;width:auto;"></select>
+          <span class="seg" id="mv-seg"><button id="btn-model-view">全层×头总览</button></span>
+          <span class="seg" id="nv-seg" style="display:none;"><button id="btn-neuron-hint" title="点击热力图单元格查看 Q·K 逐维分解">Q·K 分解：点击单元格</button></span>
         </div>
         <div class="hm-scroll"><div id="attn-heatmap"></div></div>
         <div class="hm-tip" id="hm-tip"></div>
+      </div>
+    </div>
+
+    <!-- Model View / Neuron View 浮层 -->
+    <div id="mv-overlay" class="mv-overlay">
+      <div class="mv-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h4>Model View · 全层 × 全头注意力总览</h4>
+          <button id="mv-close" class="seg" style="padding:4px 10px;">✕</button>
+        </div>
+        <div class="mv-cap">行 = 层（第 1 → N 层自上而下），列 = Head（1 → H）。
+          每格为该层该头的完整注意力矩阵（当前阶段：<span id="mv-stage"></span>）。
+          点击任意格 → 主视图定位到该层该头。</div>
+        <div id="mv-grid" class="mv-grid"></div>
+      </div>
+    </div>
+    <div id="nv-overlay" class="mv-overlay">
+      <div class="mv-card" style="min-width:min(92vw,640px);">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h4>Neuron View · Q·K 逐维分解</h4>
+          <button id="nv-close" class="seg" style="padding:4px 10px;">✕</button>
+        </div>
+        <div class="mv-cap" id="nv-cap"></div>
+        <div id="nv-body"></div>
       </div>
     </div>
 
@@ -456,6 +498,43 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
         <option value="0.1" selected>0.1</option>
         <option value="0.0">0.0</option>
       </select>
+    </fieldset>
+
+    <fieldset id="fs-sampling" style="border:1px solid var(--c-border);border-radius:10px;padding:10px 12px;margin-top:12px;">
+      <legend style="font-size:13px;color:var(--c-text-dim);padding:0 4px;">生成采样（Dense / MoE 生成）</legend>
+      <label for="sm-temp">temperature 温度 = <b id="sm-temp-val">1.0</b></label>
+      <input type="range" id="sm-temp" min="0" max="1.5" step="0.1" value="1.0" style="width:100%;">
+      <label for="sm-topk">top-k（保留最高概率 k 个）</label>
+      <select id="sm-topk">
+        <option value="0" selected>关闭</option>
+        <option value="1">1（贪心）</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+        <option value="20">20</option>
+      </select>
+      <label for="sm-topp">top-p（核采样，累积概率截断）</label>
+      <select id="sm-topp">
+        <option value="0" selected>关闭</option>
+        <option value="0.5">0.5</option>
+        <option value="0.9">0.9</option>
+        <option value="0.95">0.95</option>
+      </select>
+      <div id="sm-note" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;"></div>
+    </fieldset>
+
+    <fieldset id="fs-pretrain" style="border:1px solid var(--c-border);border-radius:10px;padding:10px 12px;margin-top:12px;">
+      <legend style="font-size:13px;color:var(--c-text-dim);padding:0 4px;">预训练权重</legend>
+      <button id="btn-pretrain" class="btn" style="width:100%;">⬇ 加载 TinyShakespeare 字符模型</button>
+      <div id="pretrain-status" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;">
+        未加载 —— Dense / MoE 演示使用随机初始化权重（生成无语义）。
+        加载后 <b>Dense</b> 视图为真实训练权重（tools/train.html 浏览器内训练产物），生成莎士比亚风格文本。
+      </div>
+      <button id="btn-finetune" class="btn" style="width:100%;margin-top:8px;" disabled
+        title="对已加载的预训练模型跑真实反向传播（Adam），观察 loss 下降">⚡ 在线微调 40 步（反向传播演示）</button>
+      <canvas id="ft-chart" height="96" style="width:100%;display:none;margin-top:8px;border:1px solid var(--c-border);border-radius:8px;"></canvas>
+      <div id="ft-status" style="font-size:12px;color:var(--c-text-dim);margin-top:4px;line-height:1.6;">
+        加载预训练权重后可用：对可视化中的同一套变量跑真实 tf.optimizer 反向传播。
+      </div>
     </fieldset>
 
     <div id="param-summary" style="margin-top:10px;font-size:13px;line-height:1.7;"></div>
@@ -638,9 +717,37 @@ class Tokenizer {
 const tokenizer = new Tokenizer();
 window.Vocab = tokenizer.buildVocab();
 
-/** 右栏 token 芯片渲染（随输入实时刷新） */
+/* ============================================================
+   预训练权重状态：TinyShakespeare 字符级模型（tools/train.html 训练产物）
+   加载后 Dense 视图前向/生成切换为字符级分词 + 真实语义；MoE 保持随机权重示意
+   （加载器与按钮绑定见「生成采样」模块之后）
+   ============================================================ */
+const Pretrained = { on: false, vocab: [], info: null };
+/* 字符级显示映射：空白在芯片/热力图中不可见，用可见符号代替（id 计算仍用原始字符） */
+const CHAR_DISP = { '\n': '⏎', ' ': '␣' };
+const CHAR_RAW  = { '⏎': '\n', '␣': ' ' };
+/** Dense 演示当前应使用的分词（预训练=字符级，否则=中文词级） */
+function denseTokens(text){
+  if(!Pretrained.on) return tokenizer.tokenize(text);
+  return [...text].map(c => CHAR_DISP[c] || c);
+}
+/** Dense 演示 token → id（预训练词表 OOV → id 0） */
+function denseIds(tokens){
+  if(!Pretrained.on) return toIds(tokens);
+  return tokens.map(c => {
+    const i = Pretrained.vocab.indexOf(CHAR_RAW[c] || c);
+    return i < 0 ? 0 : i;
+  });
+}
+/** Dense 演示当前词表（显示映射版，采样下标不变） */
+function denseVocab(){
+  if(!Pretrained.on) return window.Vocab;
+  return Pretrained.vocab.map(c => CHAR_DISP[c] || c);
+}
+
+/** 右栏 token 芯片渲染（随输入实时刷新；预训练加载后切换字符级） */
 function renderTokenChips(){
-  const toks = tokenizer.tokenize(document.getElementById('input-text').value);
+  const toks = denseTokens(document.getElementById('input-text').value);
   document.getElementById('token-chips').innerHTML =
     toks.map(t => '<span class="chip">' + t + '</span>').join('');
 }
@@ -1111,13 +1218,13 @@ function rmsNorm(x, g){
     return x.div(ms.add(1e-6).sqrt()).mul(g);
   });
 }
-/** RoPE：成对维度旋转。x [B,H,L,dh]，offset 供生成续接（本演示整段重算恒为 0） */
-function ropeApply(x){
+/** RoPE：成对维度旋转。x [B,H,L,dh]，offset = 已缓存前缀长度（KV Cache 增量续算） */
+function ropeApply(x, offset = 0){
   return tf.tidy(() => {
     const dh = x.shape[3], L = x.shape[2], half = dh / 2;
     const inv = tf.range(0, half).toFloat()
       .mul(-Math.log(10000) * 2 / dh).exp().reshape([1, 1, 1, half]);
-    const ang = tf.range(0, L).toFloat()
+    const ang = tf.range(0, L).toFloat().add(offset)
       .reshape([1, 1, L, 1]).mul(inv);
     const cos = ang.cos(), sin = ang.sin();
     const a = x.slice([0, 0, 0, 0], [-1, -1, -1, half]);
@@ -1196,7 +1303,7 @@ class ModernDecoder {
       let x = tf.gather(this.embed, ids).reshape([1, Ls, d]); // LLaMA 式：不乘 √d
       if(collect) collect.emb = x.arraySync();
       const mask = causalMask(Ls);
-      if(collect){ collect.attn = []; collect.layers = []; }
+      if(collect){ collect.attn = []; collect.layers = []; collect.q = []; collect.kv = []; }
       for(let i = 0; i < this.layers.length; i++){
         const W = this.layers[i];
         const snap = collect ? {} : null;
@@ -1214,6 +1321,7 @@ class ModernDecoder {
         const vT = rep > 1 ? v.tile([1, rep, 1, 1]) : v;
         const scores = q.matMul(kT, false, true).div(Math.sqrt(this.dh));
         const pre = collect ? scores.arraySync()[0] : null;
+        if(collect){ collect.q.push(q.arraySync()[0]); collect.kv.push(k.arraySync()[0]); }
         const wgt = tf.softmax(scores.add(mask), -1);
         const post = collect ? wgt.arraySync()[0] : null;
         const attnOut = wgt.matMul(vT).transpose([0, 2, 1, 3])
@@ -1257,7 +1365,137 @@ class ModernDecoder {
       };
     });
   }
+  /**
+   * KV Cache 增量前向：只前向 newIds，注意力直接读缓存的历史 K/V。
+   * - 首调（cache.len=0）＝预填充：标准因果掩码，RoPE offset 0
+   * - 后续单 token 调用＝解码步：无掩码（可见全部前缀），RoPE offset = past
+   * @param {number[]} newIds 本次真正前向的 token
+   * @param {{len:number, k:tf.Tensor[], v:tf.Tensor[]}} cache 跨步缓存（原地更新）
+   * @param {Object|null} collect 快照收集器（同 forward）
+   * @returns {{logits:number[][], probs:number[][]}}
+   */
+  forwardCached(newIds, cache, collect = null){
+    if(!this._built) this.build();
+    const past = cache.len;
+    const self = this;
+    const res = tf.tidy(() => {
+      const Ls = newIds.length, d = self.d;
+      const ids = tf.tensor1d(newIds, 'int32');
+      let x = tf.gather(self.embed, ids).reshape([1, Ls, d]);
+      if(collect && past === 0) collect.emb = x.arraySync();
+      /* 掩码：预填充=标准因果；多 token 续算块=左移 past 列的偏移因果；单 token 无需 */
+      let mask = null;
+      if(Ls > 1){
+        const cm = causalMask(Ls);
+        mask = past === 0 ? cm
+             : tf.tidy(() => tf.concat([tf.zeros([1, 1, Ls, past]), cm], 3));
+      }
+      const newK = [], newV = [];
+      if(collect){ collect.attn = []; collect.layers = []; collect.q = []; collect.kv = []; }
+      for(let i = 0; i < self.layers.length; i++){
+        const Lw = self.layers[i];
+        const snap = collect ? {} : null;
+        const h = rmsNorm(x, Lw.g1);
+        const q = ropeApply(h.matMul(Lw.WQ).reshape([1, Ls, self.h, self.dh])
+                                 .transpose([0, 2, 1, 3]), past);
+        const k = ropeApply(h.matMul(Lw.WK).reshape([1, Ls, self.hkv, self.dh])
+                                 .transpose([0, 2, 1, 3]), past);
+        const v = h.matMul(Lw.WV).reshape([1, Ls, self.hkv, self.dh])
+                   .transpose([0, 2, 1, 3]);
+        const kFull = past ? tf.concat([cache.k[i], k], 2) : k;
+        const vFull = past ? tf.concat([cache.v[i], v], 2) : v;
+        const rep = self.h / self.hkv;
+        const kT = rep > 1 ? kFull.tile([1, rep, 1, 1]) : kFull;
+        const vT = rep > 1 ? vFull.tile([1, rep, 1, 1]) : vFull;
+        const scores = q.matMul(kT, false, true).div(Math.sqrt(self.dh));
+        const pre = collect ? scores.arraySync()[0] : null;
+        if(collect){ collect.q.push(q.arraySync()[0]); collect.kv.push(k.arraySync()[0]); }
+        const wgt = mask ? tf.softmax(scores.add(mask), -1) : tf.softmax(scores, -1);
+        const post = collect ? wgt.arraySync()[0] : null;
+        const attnOut = wgt.matMul(vT).transpose([0, 2, 1, 3])
+          .reshape([1, Ls, self.h * self.dh]).matMul(Lw.WO);
+        if(snap){ snap.attnOut = attnOut.arraySync();
+                  if(collect) collect.attn.push({ pre, post }); }
+        x = x.add(attnOut);
+        if(snap) snap.afterRes1 = x.arraySync();
+        const h2 = rmsNorm(x, Lw.g2);
+        let ffnOut;
+        if(self.useMoE){
+          const gateLogits = h2.matMul(Lw.Wr);
+          const top = tf.topk(gateLogits, 2);
+          const gatesW = tf.softmax(top.values, -1);
+          const oh = tf.oneHot(top.indices.reshape([-1]).toInt(), self.nExperts)
+                     .reshape([1, Ls, 2, self.nExperts]);
+          const gateFull = oh.mul(gatesW.reshape([1, Ls, 2, 1])).sum(2);
+          if(snap) snap.gates = gateFull.arraySync()[0];
+          let acc = tf.zeros([1, Ls, d]);
+          Lw.ex.forEach((E, ei) => {
+            const yE = swish(h2.matMul(E.Wg)).mul(h2.matMul(E.Wu)).matMul(E.Wd);
+            acc = acc.add(yE.mul(gateFull.slice([0, 0, ei], [1, Ls, 1])));
+          });
+          ffnOut = acc;
+        }else{
+          const mid = swish(h2.matMul(Lw.Wswg)).mul(h2.matMul(Lw.Wswu));
+          if(snap) snap.ffnMid = mid.arraySync();
+          ffnOut = mid.matMul(Lw.Wswd);
+        }
+        x = x.add(ffnOut);
+        if(snap) snap.afterRes2 = x.arraySync();
+        if(snap) collect.layers.push(snap);
+        newK.push(kFull); newV.push(vFull);
+      }
+      const hf = rmsNorm(x, self.gF);
+      if(collect) collect.final = hf.arraySync();
+      const logits = hf.matMul(self.embed.transpose());
+      return { x, newK, newV,
+               logits: logits.arraySync()[0],
+               probs: tf.softmax(logits, -1).arraySync()[0] };
+    });
+    /* 缓存原地更新：替换旧 K/V 并释放被替换的张量 */
+    for(let i = 0; i < this.layers.length; i++){
+      if(cache.k[i]) cache.k[i].dispose();
+      if(cache.v[i]) cache.v[i].dispose();
+      cache.k[i] = res.newK[i]; cache.v[i] = res.newV[i];
+    }
+    cache.len = past + newIds.length;
+    res.x.dispose();
+    return { logits: res.logits, probs: res.probs };
+  }
+  /**
+   * 可求导整段前向（在线微调用）：权重一律与 2D 激活相乘，
+   * 规避 tfjs 4.22「3D×2D 变量批量 matMul」梯度 bug；数学与 forward 逐算子一致。
+   * @param {number[]} flatIds [B*T] 展平的 token id
+   * @param {number} B batch
+   * @param {number} T 序列长
+   * @returns {tf.Tensor} logits [B,T,V]
+   */
+  forwardTrain(flatIds, B, T){
+    const d = this.d, h = this.h, hkv = this.hkv, dh = this.dh, rep = h / hkv;
+    return tf.tidy(() => {
+      const BT = B * T;
+      let x = tf.gather(this.embed, tf.tensor1d(flatIds, 'int32')).reshape([B, T, d]);
+      const mask = causalMask(T);
+      for(const L of this.layers){
+        const h1 = rmsNorm(x, L.g1).reshape([BT, d]);
+        const q = ropeApply(h1.matMul(L.WQ).reshape([B, T, h, dh]).transpose([0, 2, 1, 3]), 0);
+        const k = ropeApply(h1.matMul(L.WK).reshape([B, T, hkv, dh]).transpose([0, 2, 1, 3]), 0);
+        const v = h1.matMul(L.WV).reshape([B, T, hkv, dh]).transpose([0, 2, 1, 3]);
+        const kT = rep > 1 ? k.tile([1, rep, 1, 1]) : k;
+        const vT = rep > 1 ? v.tile([1, rep, 1, 1]) : v;
+        const wgt = tf.softmax(q.matMul(kT, false, true).div(Math.sqrt(dh)).add(mask), -1);
+        x = x.add(wgt.matMul(vT).transpose([0, 2, 1, 3])
+          .reshape([BT, h * dh]).matMul(L.WO).reshape([B, T, d]));
+        const h2 = rmsNorm(x, L.g2).reshape([BT, d]);
+        const g = h2.matMul(L.Wswg);
+        x = x.add(g.mul(tf.sigmoid(g)).mul(h2.matMul(L.Wswu))
+          .matMul(L.Wswd).reshape([B, T, d]));
+      }
+      const hf = rmsNorm(x, this.gF).reshape([BT, d]);
+      return tf.matMul(this.embed, hf, false, true).transpose().reshape([B, T, this.V]);
+    });
+  }
 }
+
 /* 惰性构建：首次使用对应演示时才建权重；超参变化时已建者重建 */
 const modernModel = { dense: new ModernDecoder(false), moe: new ModernDecoder(true) };
 function ensureModern(m){ if(!m._built) m.build(); }
@@ -3217,6 +3455,8 @@ const AttentionHeatmap = {
     this.head = 0; this.layer = 0;
     /* 自/交叉切换段控：仅当携带双份数据（解码演示）时显示 */
     document.getElementById('kind-seg').style.display = d.alt ? '' : 'none';
+    /* Q·K 分解按钮：仅当携带 q/k 向量（现代引擎）时可用 */
+    document.getElementById('nv-seg').style.display = d.q ? '' : 'none';
     /* 启用控件组（clear 后处于禁用态） */
     const ctl = document.getElementById('heatmap-controls');
     ctl.style.opacity = ''; ctl.style.pointerEvents = '';
@@ -3303,9 +3543,9 @@ const AttentionHeatmap = {
       domainMin = -m; domainMax = m;
     }
     const t = v => (v - domainMin) / (domainMax - domainMin || 1);
-    const cell = Math.max(26, Math.min(42, Math.floor(560 / (L + 1))));
+    const cell = Math.max(26, Math.min(42, Math.floor(560 / (Math.max(L, cols.length) + 1))));
     const mL = 64, mT = 64, mR = 10, mB = 30;
-    const W = mL + L * cell + mR, H = mT + L * cell + mB;
+    const W = mL + cols.length * cell + mR, H = mT + L * cell + mB;
     const svg = d3.select('#attn-heatmap').html('')
       .append('svg').attr('width', W).attr('height', H);
     const tip = document.getElementById('hm-tip');
@@ -3322,10 +3562,10 @@ const AttentionHeatmap = {
       .attr('text-anchor','end').attr('font-size',12)
       .attr('fill','var(--c-text-dim)').style('font-family','var(--font-mono)')
       .text(d => d.length > 6 ? d.slice(0,6) + '…' : d);
-    /* 单元格（2px 表面间隙 = 描边同背景色） */
+    /* 单元格（2px 表面间隙 = 描边同背景色）；列数取 cols（支持非方阵，如 KV 单行解码视图） */
     const layer = this.layer, stage = this.stage;
     for(let r = 0; r < L; r++){
-      for(let c = 0; c < L; c++){
+      for(let c = 0; c < cols.length; c++){
         const v = mat[r][c];
         svg.append('rect')
           .attr('x', mL + c*cell + 1).attr('y', mT + r*cell + 1)
@@ -3334,12 +3574,14 @@ const AttentionHeatmap = {
           .on('mousemove', ev => {
             tip.innerHTML = 'Q="<b>' + this.data.tokens[r] + '</b>" K="<b>' +
               cols[c] + '</b>"<br>' + (stage === 'post' ? 'P=' : 'score=') +
-              (Math.abs(v) < 1e-4 && stage === 'post' ? v.toExponential(1) : v.toFixed(4));
+              (Math.abs(v) < 1e-4 && stage === 'post' ? v.toExponential(1) : v.toFixed(4)) +
+              (this.data.q ? '<br><i>点击查看 Q·K 逐维分解</i>' : '');
             tip.style.opacity = 1;
             tip.style.left = (ev.clientX + 14) + 'px';
             tip.style.top  = (ev.clientY + 14) + 'px';
           })
-          .on('mouseleave', () => { tip.style.opacity = 0; });
+          .on('mouseleave', () => { tip.style.opacity = 0; })
+          .on('click', () => { if(this.data.q) this.showNeuronView(r, c); });
       }
     }
     /* 渐变图例 */
@@ -3357,8 +3599,120 @@ const AttentionHeatmap = {
        .attr('text-anchor','end').attr('fill','var(--c-text-dim)')
        .style('font-family','var(--font-mono)')
        .text(stage === 'post' ? '1' : domainMax.toFixed(2));
+  },
+
+  /** Model View：全层 × 全头注意力矩阵总览（Canvas 网格），点击格定位主视图 */
+  showModelView(){
+    if(!this.data) return;
+    const grid = document.getElementById('mv-grid');
+    const L = this.data.layers.length, Hn = this.data.layers[0].post.length;
+    const cols = this.data.colTokens || this.data.tokens;
+    const n = this.data.tokens.length, nc = cols.length;
+    const ramp = d3.interpolateRgbBasis(this.RAMP);
+    const S = 96;
+    document.getElementById('mv-stage').textContent =
+      this.stage === 'post' ? 'Softmax 后' : 'Softmax 前';
+    /* 网格：第 1 行 = 列头（Head 编号），之后每行 = 一层 */
+    grid.style.gridTemplateColumns = '34px repeat(' + Hn + ', ' + S + 'px)';
+    grid.innerHTML = '<div class="mv-axis"></div>' +
+      Array.from({length: Hn}, (_, h) =>
+        '<div class="mv-axis">H' + (h + 1) + '</div>').join('');
+    for(let l = 0; l < L; l++){
+      const cap = document.createElement('div');
+      cap.className = 'mv-axis'; cap.textContent = 'L' + (l + 1);
+      grid.appendChild(cap);
+      for(let h = 0; h < Hn; h++){
+        const mat = this.data.layers[l][this.stage][h];
+        let dMin = 0, dMax = 1;
+        if(this.stage === 'pre'){
+          let m = 0;
+          mat.forEach(row => row.forEach(v => { m = Math.max(m, Math.abs(v)); }));
+          dMin = -m; dMax = m;
+        }
+        const cv = document.createElement('canvas');
+        cv.width = S; cv.height = S; cv.className = 'mv-cell';
+        cv.title = '第 ' + (l + 1) + ' 层 · Head ' + (h + 1) + '（点击定位主视图）';
+        const ctx = cv.getContext('2d');
+        const cw = S / nc, ch = S / n;
+        for(let r = 0; r < n; r++){
+          for(let c = 0; c < nc; c++){
+            const v = mat[r] ? (mat[r][c] || 0) : 0;
+            ctx.fillStyle = ramp(Math.max(0, Math.min(1, (v - dMin) / (dMax - dMin || 1))));
+            ctx.fillRect(c * cw, r * ch, cw + .5, ch + .5);
+          }
+        }
+        cv.addEventListener('click', () => {
+          this.setLayer(l); this.setHead(h);
+          document.getElementById('mv-overlay').classList.remove('open');
+        });
+        grid.appendChild(cv);
+      }
+    }
+    document.getElementById('mv-overlay').classList.add('open');
+  },
+
+  /**
+   * Neuron View：Q·K 逐维点积分解（BertViz 式）。
+   * 展示所选 (query 行 qi, key 列 ki) 的 q 向量、k 向量与逐维乘积，
+   * 并标注 Σqᵢkᵢ 与 ÷√dh 后的 pre-score（与热力图 Softmax 前数值一致）。
+   * @param {number} qi query 行下标
+   * @param {number} ki key 列下标
+   */
+  showNeuronView(qi, ki){
+    const l = this.layer, h = this.head;
+    const qAll = this.data.q[l], kAll = this.data.kv[l];   // [H][Lq][dh] / [hkv][Lk][dh]
+    const rep = qAll.length / kAll.length;
+    const qv = qAll[h][qi];
+    const kv = kAll[Math.floor(h / rep)][ki];
+    const dh = qv.length;
+    const prods = qv.map((v, i) => v * kv[i]);
+    const dot = prods.reduce((a, b) => a + b, 0);
+    const preScore = this.data.layers[l].pre[h][qi][ki];
+    const cols = this.data.colTokens || this.data.tokens;
+    const sh = Math.sqrt(dh).toFixed(2);
+    document.getElementById('nv-cap').innerHTML =
+      '第 <b>' + (l + 1) + '</b> 层 · Head <b>' + (h + 1) + '</b> · ' +
+      'Q="<b>' + this.data.tokens[qi] + '</b>"（位置 ' + qi + '） × ' +
+      'K="<b>' + cols[ki] + '</b>"（位置 ' + ki + '） · d<sub>h</sub>=' + dh;
+    const vecRow = (label, vec, color) => {
+      const mx = Math.max(...vec.map(Math.abs), 1e-9);
+      return '<div class="nv-label">' + label + '</div>' +
+        '<div class="nv-vec">' + vec.map(v => {
+          const hh = Math.max(2, Math.abs(v) / mx * 60);
+          return '<span class="nv-bar" style="height:' + hh + 'px;background:' +
+            (v >= 0 ? color : '#d24a43') + '" title="' + v.toFixed(4) + '"></span>';
+        }).join('') + '</div>';
+    };
+    document.getElementById('nv-body').innerHTML =
+      vecRow('Q 向量（' + dh + ' 维）', qv, 'var(--c-primary)') +
+      vecRow('K 向量（' + dh + ' 维）', kv, '#2e9e6b') +
+      vecRow('逐维乘积 qᵢ·kᵢ', prods, '#b8860b') +
+      '<div class="nv-label" style="margin-top:8px;">' +
+      'Σ qᵢkᵢ = <b>' + dot.toFixed(3) + '</b> &nbsp;→&nbsp; ÷√d<sub>h</sub>(√' + dh +
+      '≈' + sh + ') = <b>' + (dot / Math.sqrt(dh)).toFixed(3) +
+      '</b> &nbsp;（热力图 Softmax 前 score = ' + preScore.toFixed(3) + '）</div>';
+    document.getElementById('nv-overlay').classList.add('open');
   }
 };
+
+/* Model View / Neuron View 控件接线 */
+document.getElementById('btn-model-view').addEventListener('click',
+  () => AttentionHeatmap.showModelView());
+document.getElementById('mv-close').addEventListener('click',
+  () => document.getElementById('mv-overlay').classList.remove('open'));
+document.getElementById('nv-close').addEventListener('click',
+  () => document.getElementById('nv-overlay').classList.remove('open'));
+['mv-overlay', 'nv-overlay'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    if(e.target.id === id) e.target.classList.remove('open');
+  });
+});
+window.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){
+    document.getElementById('mv-overlay').classList.remove('open');
+    document.getElementById('nv-overlay').classList.remove('open');
+  }
+});
 
 /* ---------- Top-K 概率条形图（单系列：直接数值标注，无需图例） ---------- */
 const TopKChart = {
@@ -3654,11 +4008,282 @@ document.getElementById('step-log').addEventListener('click', e => {
 });
 
 /** Top-5 概率 → 下一个 token（公共工具） */
-function top5Of(probs){
+function top5Of(probs, vocab = window.Vocab){
   const order = [...probs.keys()].sort((a, b) => probs[b] - probs[a]);
-  return { top5: order.slice(0, 5).map(i => ({ token: window.Vocab[i], prob: probs[i] })),
+  return { top5: order.slice(0, 5).map(i => ({ token: vocab[i], prob: probs[i] })),
            next: order[0] };
 }
+
+/* ============================================================
+   生成采样：temperature / top-k / top-p（右栏「生成采样」控件组）
+   流程：logits÷T → softmax → top-k 截断 → top-p 截断 → 重归一 → 按概率采样
+   ============================================================ */
+const Sampling = { temp: 1.0, topK: 0, topP: 0 };
+/** 采样参数摘要（日志 meta 用） */
+function samplingLabel(){
+  return 'T=' + Sampling.temp.toFixed(1) +
+    (Sampling.topK ? ' top-k=' + Sampling.topK : '') +
+    (Sampling.topP ? ' top-p=' + Sampling.topP : '');
+}
+/**
+ * 从词表 logits 按当前采样策略取下一 token。
+ * @param {number[]} logits [V] 原始 logit
+ * @returns {{next:number, p:number, top5:{token:string,prob:number}[]}}
+ *          top5 为截断+重归一后的分布（Top-K 图表展示「变形后」的分布）
+ */
+function sampleNext(logits, vocab = window.Vocab){
+  /* T=0：严格贪心——直接取 argmax，不截断不采样；分布仍归一供 Top-K 图表展示 */
+  if(Sampling.temp <= 0){
+    let bi = 0;
+    for(let i = 1; i < logits.length; i++) if(logits[i] > logits[bi]) bi = i;
+    const mx = Math.max(...logits);
+    const ex = logits.map(v => Math.exp(v - mx));
+    const Z = ex.reduce((a, b) => a + b, 0);
+    return { next: bi, p: ex[bi] / Z,
+             top5: [...logits.keys()].sort((a, b) => logits[b] - logits[a])
+               .slice(0, 5).map(i => ({ token: vocab[i], prob: ex[i] / Z })) };
+  }
+  const scaled = logits.map(v => v / Sampling.temp);
+  const mx = Math.max(...scaled);
+  const ex = scaled.map(v => Math.exp(v - mx));
+  const Z = ex.reduce((a, b) => a + b, 0);
+  const probs = ex.map(v => v / Z);
+  const idx = [...probs.keys()].sort((a, b) => probs[b] - probs[a]);
+  /* top-k 截断 */
+  let keep = Sampling.topK > 0 ? new Set(idx.slice(0, Sampling.topK)) : null;
+  /* top-p 截断：按降序累加到首次 ≥ p 为止 */
+  if(Sampling.topP > 0 && Sampling.topP < 1){
+    const nucleus = new Set();
+    let cum = 0;
+    for(const i of idx){
+      nucleus.add(i); cum += probs[i];
+      if(cum >= Sampling.topP) break;
+    }
+    keep = keep ? new Set([...keep].filter(i => nucleus.has(i))) : nucleus;
+  }
+  const kept = keep ? idx.filter(i => keep.has(i)) : idx;
+  const Z2 = kept.reduce((a, i) => a + probs[i], 0);
+  const adj = kept.map(i => ({ i, p: probs[i] / Z2 }));
+  /* 按重归一后的分布随机采样 */
+  const r = Math.random();
+  let acc = 0, next = adj[adj.length - 1].i;
+  for(const a of adj){ acc += a.p; if(r <= acc){ next = a.i; break; } }
+  return { next, p: probs[next] / Z2,
+           top5: adj.slice(0, 5).map(a => ({ token: vocab[a.i], prob: a.p })) };
+}
+(function bindSampling(){
+  const t = document.getElementById('sm-temp');
+  const k = document.getElementById('sm-topk');
+  const p = document.getElementById('sm-topp');
+  if(!t) return;
+  const upd = () => {
+    Sampling.temp = Number(t.value);
+    Sampling.topK = Number(k.value);
+    Sampling.topP = Number(p.value);
+    document.getElementById('sm-temp-val').textContent = Sampling.temp.toFixed(1);
+    document.getElementById('sm-note').textContent =
+      '当前 ' + samplingLabel() +
+      (Sampling.temp === 0 ? ' → 贪心（等价 argmax）'
+        : (!Sampling.topK && !Sampling.topP ? ' → 纯温度采样' : ' → 截断后重归一采样')) +
+      '。改动对下一次生成生效。';
+  };
+  t.addEventListener('input', upd);
+  k.addEventListener('change', upd);
+  p.addEventListener('change', upd);
+  upd();
+})();
+
+/* ============================================================
+   预训练权重加载器（状态与分词助手声明在分词模块旁，避免 TDZ）
+   ============================================================ */
+/** 预训练加载后改超参会重建随机权重 → 状态复位 */
+window.addEventListener('config-changed', () => {
+  if(Pretrained.on){
+    Pretrained.on = false;
+    const st = document.getElementById('pretrain-status');
+    if(st) st.textContent = '⚠️ 超参数已变更，预训练权重失效（仅 128/4/3 配置可用），已回退随机初始化。';
+    const b = document.getElementById('btn-pretrain');
+    if(b) b.textContent = '⬇ 重新加载 TinyShakespeare 字符模型';
+    const fb = document.getElementById('btn-finetune');
+    if(fb) fb.disabled = true;
+    renderTokenChips();
+  }
+});
+
+async function loadPretrained(){
+  const btn = document.getElementById('btn-pretrain');
+  const st = document.getElementById('pretrain-status');
+  btn.disabled = true;
+  st.textContent = '⏳ 下载权重中…（约 4MB，首次后浏览器缓存）';
+  try{
+    const res = await fetch('assets/pretrained-dense.json');
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const w = await res.json();
+    /* 固定超参 128/4/3（触发 config-changed → 重建随机权重），随后覆盖为训练权重 */
+    const setHp = (id, val) => {
+      const el = document.getElementById(id);
+      el.value = val;
+      el.dispatchEvent(new Event('change'));
+    };
+    setHp('hp-d-model', '128');
+    setHp('hp-num-heads', '4');
+    setHp('hp-num-layers', '3');
+    ensureModern(modernModel.dense);
+    const M = modernModel.dense;
+    const Vm = w.meta.vocab.length;
+    const swap = (v, flat, shape) => {
+      const t = tf.tensor(flat, shape);
+      v.dispose();
+      return tf.variable(t);
+    };
+    M.embed = swap(M.embed, w.embed, [Vm, M.d]);
+    M.gF = swap(M.gF, w.gF, [M.d]);
+    M.V = Vm;   /* 词表尺寸同步（forwardTrain/导出依赖） */
+    M.layers.forEach((L, i) => {
+      const lw = w.layers[i];
+      L.g1   = swap(L.g1,   lw.g1,   [M.d]);
+      L.WQ   = swap(L.WQ,   lw.WQ,   [M.d, M.h * M.dh]);
+      L.WK   = swap(L.WK,   lw.WK,   [M.d, M.hkv * M.dh]);
+      L.WV   = swap(L.WV,   lw.WV,   [M.d, M.hkv * M.dh]);
+      L.WO   = swap(L.WO,   lw.WO,   [M.h * M.dh, M.d]);
+      L.Wswg = swap(L.Wswg, lw.Wswg, [M.d, M.dff]);
+      L.Wswu = swap(L.Wswu, lw.Wswu, [M.d, M.dff]);
+      L.Wswd = swap(L.Wswd, lw.Wswd, [M.dff, M.d]);
+    });
+    Pretrained.on = true;
+    Pretrained.vocab = [...w.meta.vocab];
+    Pretrained.info = w.meta;
+    st.innerHTML = '✅ 已加载：字符词表 ' + Vm + ' · 训练 loss ' +
+      Number(w.meta.finalLoss).toFixed(3) +
+      '（TinyShakespeare 400KB · d128/h4/N3）。<b>Dense</b> 前向与生成即真实语义，建议输入英文。';
+    btn.textContent = '↻ 重新加载预训练权重';
+    document.getElementById('btn-finetune').disabled = false;
+    FineTuner.baseHist = []; FineTuner.liveHist = [];
+    document.getElementById('ft-chart').style.display = 'none';
+    document.getElementById('ft-status').textContent =
+      '已就绪：点击上方按钮对同一套变量跑真实反向传播（约 10 秒）。';
+    document.getElementById('input-text').value = 'First Citizen:\nWe are resolved.';
+    renderTokenChips();
+  }catch(e){
+    st.textContent = '❌ 加载失败：' + e.message +
+      '（需经 http:// 访问；直接双击 file:// 打开时 fetch 受限）';
+  }
+  btn.disabled = false;
+}
+document.getElementById('btn-pretrain').addEventListener('click', loadPretrained);
+
+/* ============================================================
+   在线微调（P1-2）：对预训练后的同一套变量跑真实反向传播。
+   - 语料与训练期相同（assets/corpus.txt 字符流）
+   - forwardTrain 与可视化 forward 逐算子一致（2D 展平规避 tfjs 梯度 bug）
+   - loss 曲线：灰线 = 训练期历史（weights meta.lossHist），彩线 = 本次微调
+   ============================================================ */
+const FineTuner = {
+  running: false, corpus: null, baseHist: [], liveHist: [],
+
+  async ensureCorpus(){
+    if(!this.corpus){
+      const r = await fetch('assets/corpus.txt');
+      this.corpus = await r.text();
+    }
+  },
+
+  /** 画 loss 曲线：baseHist 全程 + liveHist 接续 */
+  drawChart(){
+    const cv = document.getElementById('ft-chart');
+    const all = this.baseHist.concat(this.liveHist);
+    if(all.length < 2){ cv.style.display = 'none'; return; }
+    cv.style.display = 'block';
+    const W = cv.width = cv.clientWidth * 2, H = cv.height = 192;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    const mx = Math.max(...all), mn = Math.min(...all);
+    const X = i => i / (all.length - 1) * (W - 16) + 8;
+    const Y = v => H - 14 - (v - mn) / (mx - mn || 1) * (H - 28);
+    const line = (arr, off, color, wd) => {
+      ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.beginPath();
+      arr.forEach((v, i) => {
+        const x = X(off + i), y = Y(v);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.stroke();
+    };
+    line(this.baseHist, 0, 'rgba(128,138,160,.55)', 2);
+    if(this.liveHist.length){
+      const off = Math.max(0, this.baseHist.length - 1);
+      line([this.baseHist[off], ...this.liveHist], off, '#e07a2f', 3);
+    }
+    ctx.fillStyle = 'rgba(128,138,160,.9)';
+    ctx.font = '20px monospace';
+    ctx.fillText('loss ' + all[all.length - 1].toFixed(3), 12, 26);
+  },
+
+  async run(){
+    if(this.running || !Pretrained.on) return;
+    const btn = document.getElementById('btn-finetune');
+    const st = document.getElementById('ft-status');
+    this.running = true; btn.disabled = true;
+    try{
+      await this.ensureCorpus();
+      const M = modernModel.dense;
+      const vocab = Pretrained.vocab;
+      const Vn = vocab.length;
+      const charIds = [...this.corpus].map(c => vocab.indexOf(c));
+      const B = 4, T = 96, STEPS = 40;
+      this.baseHist = Pretrained.info.lossHist || [];
+      this.liveHist = [];
+      this.drawChart();
+      /* 固定验证批：曲线在其上评估，消除单批噪声、保证逐点可比 */
+      const mkBatch = () => {
+        const flat = [], tgt = [];
+        for(let b = 0; b < B; b++){
+          const p = Math.floor(Math.random() * (charIds.length - T - 1));
+          for(let t = 0; t < T; t++) flat.push(charIds[p + t]);
+          for(let t = 1; t <= T; t++) tgt.push(charIds[p + t]);
+        }
+        return { flat, tgt };
+      };
+      const ev = mkBatch();
+      const evalLoss = () => tf.tidy(() => {
+        const lg = M.forwardTrain(ev.flat, B, T);
+        const lp = tf.logSoftmax(lg.reshape([-1, Vn]));
+        return lp.mul(tf.oneHot(tf.tensor1d(ev.tgt, 'int32'), Vn))
+          .sum(-1).neg().mean().dataSync()[0];
+      });
+      this.liveHist.push(+evalLoss().toFixed(4));   // 微调前起点
+      this.drawChart();
+      const opt = tf.train.adam(5e-5);
+      st.textContent = '⏳ 反向传播中…';
+      for(let s = 0; s < STEPS; s++){
+        const { flat, tgt } = mkBatch();
+        const loss = opt.minimize(() => {
+          const lg = M.forwardTrain(flat, B, T);
+          const lp = tf.logSoftmax(lg.reshape([-1, Vn]));
+          return lp.mul(tf.oneHot(tf.tensor1d(tgt, 'int32'), Vn))
+            .sum(-1).neg().mean();
+        }, true);
+        loss.dispose();
+        this.liveHist.push(+evalLoss().toFixed(4));
+        st.textContent = '⏳ 微调 step ' + (s + 1) + '/' + STEPS +
+          ' · 验证 loss ' + this.liveHist[this.liveHist.length - 1].toFixed(3);
+        this.drawChart();
+        await tf.nextFrame();
+      }
+      opt.dispose();
+      const a = this.liveHist[0], b = this.liveHist[this.liveHist.length - 1];
+      st.innerHTML = (b < a ? '✅' : '⚠️') + ' 微调完成：验证 loss ' +
+        a.toFixed(3) + ' → ' + b.toFixed(3) +
+        '（Adam lr=5e-5 · B=4 · T=96 · 固定验证批评估）。' +
+        '权重已就地更新，重新运行生成可见差异。';
+    }catch(e){
+      st.textContent = '❌ 微调失败：' + e.message;
+    }
+    this.running = false;
+    btn.disabled = false;
+  }
+};
+document.getElementById('btn-finetune').addEventListener('click', () => FineTuner.run());
+
 /** OOV → <unk> 的 id 映射 */
 function toIds(tokens){
   const unk = window.Vocab.indexOf('<unk>');
@@ -3801,8 +4426,8 @@ const DenseDemo = {
     document.getElementById('step-log').innerHTML = '';
     ArchitectureRenderer.clearHighlight();
 
-    const tokens = tokenizer.tokenize(text);
-    const ids = toIds(tokens);
+    const tokens = denseTokens(text);
+    const ids = denseIds(tokens);
     ensureModern(modernModel.dense);
     const collect = {};
     const t0 = performance.now();
@@ -3835,18 +4460,18 @@ const DenseDemo = {
         stats: statsOf(s.afterRes2) });
     });
     const lastProbs = r.probs[r.probs.length - 1];
-    const { top5 } = top5Of(lastProbs);
+    const { top5 } = top5Of(lastProbs, denseVocab());
     steps.push({ kind: 'head', mod: 'lm-head', label: 'LM Head（权重绑定）', top5,
-      shape: '[' + tokens.length + ', ' + window.Vocab.length + ']',
+      shape: '[' + tokens.length + ', ' + denseVocab().length + ']',
       ms: totalMs, note: 'Final RMSNorm → h·Eᵀ（权重绑定），预测下一个 token' });
 
-    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
+    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self', q: collect.q, kv: collect.kv });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s), () => ArchitectureRenderer.clearHighlight());
     StepPlayer.startPaused();
   },
 
-  /** Dense 视图：整段预填充后逐词生成（每步整段重算，无 KV Cache 简化） */
+  /** Dense 视图：KV Cache 增量生成——Prefill 整段一次写缓存，此后每步只前向 1 个新 token */
   runGenerate(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
@@ -3855,28 +4480,60 @@ const DenseDemo = {
     document.getElementById('step-log').innerHTML = '';
     ArchitectureRenderer.clearHighlight();
 
-    const tokens = tokenizer.tokenize(text);
-    const ids = toIds(tokens);
+    const tokens = denseTokens(text);
+    const ids = denseIds(tokens);
     ensureModern(modernModel.dense);
+    const M = modernModel.dense;
+    const eos = Pretrained.on ? -1 : window.Vocab.indexOf('<eos>');
     const steps = [{ kind: 'note', label: '演示说明' }];
     const data = [];
-    let prefix = ids.slice();
-    const genToks = [];
-    for(let s = 0; s < 5; s++){
-      const t0 = performance.now();
-      const collect = {};
-      const r = modernModel.dense.forward(prefix, collect);
-      const ms = +(performance.now() - t0).toFixed(1);
-      const { top5, next } = top5Of(r.probs[r.probs.length - 1]);
-      data.push({ prefix: tokenizer.tokenize(text).concat(genToks),
-                  top5, chosen: window.Vocab[next], p: r.probs[r.probs.length-1][next],
-                  ms, attn: collect.attn });
+    const genToks = [], genIds = [];
+    /* 释放上一轮运行的缓存张量（防 WebGL 缓冲泄漏），再建新缓存 */
+    if(this._cache){
+      this._cache.k.forEach(t => t && t.dispose());
+      this._cache.v.forEach(t => t && t.dispose());
+    }
+    const cache = this._cache = { len: 0, k: [], v: [] };
+
+    /* Prefill：整段一次前向，全部 K/V 写入缓存，末位置直接给出第 1 个生成 token */
+    let t0 = performance.now();
+    const pc = {};
+    let r = M.forwardCached(ids, cache, pc);
+    let ms = +(performance.now() - t0).toFixed(1);
+    let pick = sampleNext(r.logits[r.logits.length - 1], denseVocab());
+    data.push({ prefix: tokens.slice(), fwdLen: ids.length, cacheAfter: cache.len,
+                top5: pick.top5, chosen: denseVocab()[pick.next],
+                p: pick.p, ms,
+                attn: pc.attn, q: pc.q, kv: pc.kv, decode: false });
+    steps.push({ kind: 'gen', di: 0, mod: 'lm-head', label: 'Prefill 预填充',
+      note: '整段 ' + ids.length + ' tokens 一次前向 → 各层 K/V 写入缓存 → ' +
+            samplingLabel() + ' 采样「' + denseVocab()[pick.next] + '」' });
+    genToks.push(denseVocab()[pick.next]);
+    genIds.push(pick.next);
+    let next = pick.next;
+
+    /* Decode：每步只前向 1 个新 token；另跑一次整段重算作耗时对照 */
+    for(let s = 1; s < 8 && next !== eos; s++){
+      t0 = performance.now();
+      const c = {};
+      r = M.forwardCached([next], cache, c);
+      ms = +(performance.now() - t0).toFixed(1);
+      const fullIds = ids.concat(genIds);
+      const tb = performance.now();
+      M.forward(fullIds);
+      const bms = +(performance.now() - tb).toFixed(1);
+      pick = sampleNext(r.logits[0], denseVocab());
+      data.push({ prefix: tokens.concat(genToks), fwdLen: 1, cacheAfter: cache.len,
+                  top5: pick.top5, chosen: denseVocab()[pick.next],
+                  p: pick.p, ms, bms, baseLen: fullIds.length,
+                  attn: c.attn, q: c.q, kv: c.kv, decode: true, fedTok: denseVocab()[next] });
       steps.push({ kind: 'gen', di: data.length - 1, mod: 'lm-head',
-        label: '生成第 ' + (s + 1) + ' 步',
-        note: '前缀 ' + (prefix.length + 1) + ' tokens → 选中「' + window.Vocab[next] + '」' });
-      prefix = prefix.concat([next]);
-      genToks.push(window.Vocab[next]);
-      if(next === window.Vocab.indexOf('<eos>')) break;
+        label: 'Decode 第 ' + s + ' 步',
+        note: '只前向新 token「' + denseVocab()[next] + '」，前 ' + (cache.len - 1) +
+              ' 个位置的 K/V 直接读缓存 → 采样「' + denseVocab()[pick.next] + '」' });
+      next = pick.next;
+      genToks.push(denseVocab()[next]);
+      genIds.push(next);
     }
     steps.push({ kind: 'end', tokens: genToks, mod: 'lm-head', label: '生成结束' });
     this._genData = data;
@@ -3942,18 +4599,35 @@ const DenseDemo = {
     if(s.kind === 'note'){
       ArchitectureRenderer.highlight(['tok', 'emb']);
       log.insertAdjacentHTML('beforeend',
-        '<li><span class="log-note">⚠️ 权重随机初始化（RMSNorm+RoPE+GQA+SwiGLU）——' +
-        '预填充完成，开始逐词生成（每步整段重算，演示未用 KV Cache）。</span></li>');
+        '<li><span class="log-note">' +
+        (Pretrained.on
+          ? '✅ 预训练权重（TinyShakespeare 字符级 · tools/train.html 浏览器内训练）——'
+          : '⚠️ 权重随机初始化（RMSNorm+RoPE+GQA+SwiGLU）——') +
+        'KV Cache 增量生成：Prefill 整段前向一次，此后每步只前向 1 个新 token，' +
+        '历史 K/V 直接读缓存。对照耗时仅示意：本演示模型极小、前缀极短，' +
+        'concat/内核启动开销占主导；真实大模型长上下文下增量优势随长度放大。</span></li>');
     }else if(s.kind === 'gen'){
       const d = this._genData[s.di];
-      AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self' });
+      if(d.decode){
+        /* 解码步：单行热力图 = 新 token 对全部缓存历史（含自身）的注意力 */
+        AttentionHeatmap.setData({ tokens: [d.fedTok], colTokens: d.prefix,
+                                   layers: d.attn, kind: 'self', q: d.q, kv: d.kv });
+      }else{
+        AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self', q: d.q, kv: d.kv });
+      }
       ArchitectureRenderer.highlight(['head']);
       log.insertAdjacentHTML('beforeend',
-        '<li class="current"><span class="log-step">生成第 ' + (s.di + 1) +
-        ' 步 · 前缀 ' + d.prefix.length + ' tokens</span>' +
+        '<li class="current"><span class="log-step">' + s.label +
+        (d.decode
+          ? ' · 只前向 1 token · 缓存 ' + d.cacheAfter + ' 条 K/V'
+          : ' · 整段 ' + d.fwdLen + ' tokens 并入缓存') + '</span>' +
         TopKChart.render(d.top5) +
-        '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
-        ' · ' + d.ms + ' ms · 热力图=末层 GQA 注意力</span></li>');
+        '<span class="log-meta">采样「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        ' · ' + samplingLabel() +
+        ' · 增量前向 ' + d.ms + ' ms' +
+        (d.decode ? ' <i>（整段重算对照 ' + d.baseLen + ' tk ' + d.bms + ' ms）</i>' : '') +
+        ' · 热力图=' + (d.decode ? '新 token 读全缓存的注意力' : '末层 GQA 注意力') +
+        '</span></li>');
     }else if(s.kind === 'end'){
       log.insertAdjacentHTML('beforeend',
         '<li><span class="log-step">生成结束：</span>' +
@@ -4012,7 +4686,7 @@ const MoEDemo = {
     steps.push({ kind: 'end', mod: 'lm-head', label: 'LM Head 与专家负载', top5,
       tokens: collect.layers.map(s => s.gates) });
 
-    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self' });
+    AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self', q: collect.q, kv: collect.kv });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s, tokens), () => ArchitectureRenderer.clearHighlight());
     StepPlayer.startPaused();
@@ -4082,7 +4756,7 @@ const MoEDemo = {
     log.lastElementChild.scrollIntoView({ block:'nearest' });
   },
 
-  /** MoE 视图：预填充后逐词生成（每步含真实 Router 门控） */
+  /** MoE 视图：KV Cache 增量生成（每步只前向 1 token，含真实 Router 门控） */
   runGenerate(){
     const text = document.getElementById('input-text').value;
     if(!text.trim()) return;
@@ -4094,30 +4768,63 @@ const MoEDemo = {
     const tokens = tokenizer.tokenize(text);
     const ids = toIds(tokens);
     ensureModern(modernModel.moe);
-    const E = modernModel.moe.nExperts;
+    const M = modernModel.moe;
+    const E = M.nExperts;
+    const eos = window.Vocab.indexOf('<eos>');
     const steps = [{ kind: 'note', label: '演示说明',
       html: '⚠️ 权重随机初始化——逐词生成的每一步都经过真实 Router Top-2 路由' +
-            '（激活参数 ≈ 2/' + E + '）；每步整段重算，未用 KV Cache。' }];
+            '（激活参数 ≈ 2/' + E + '）；KV Cache 增量生成：Prefill 整段一次，' +
+            '此后每步只前向 1 个新 token。对照耗时仅示意：模型极小/前缀极短时 ' +
+            'concat 与内核启动开销占主导，真实大模型长上下文下增量优势随长度放大。' }];
     const data = [];
-    let prefix = ids.slice();
-    const genToks = [];
-    for(let s = 0; s < 4; s++){
-      const t0 = performance.now();
-      const collect = {};
-      const r = modernModel.moe.forward(prefix, collect);
-      const ms = +(performance.now() - t0).toFixed(1);
-      const { top5, next } = top5Of(r.probs[r.probs.length - 1]);
-      data.push({ prefix: tokens.concat(genToks), top5,
-                  chosen: window.Vocab[next],
-                  p: r.probs[r.probs.length - 1][next], ms,
-                  attn: collect.attn, gates: collect.layers.map(l => l.gates) });
+    const genToks = [], genIds = [];
+    /* 释放上一轮运行的缓存张量（防 WebGL 缓冲泄漏），再建新缓存 */
+    if(this._cache){
+      this._cache.k.forEach(t => t && t.dispose());
+      this._cache.v.forEach(t => t && t.dispose());
+    }
+    const cache = this._cache = { len: 0, k: [], v: [] };
+
+    /* Prefill */
+    let t0 = performance.now();
+    const pc = {};
+    let r = M.forwardCached(ids, cache, pc);
+    let ms = +(performance.now() - t0).toFixed(1);
+    let pick = sampleNext(r.logits[r.logits.length - 1]);
+    data.push({ prefix: tokens.slice(), fwdLen: ids.length, cacheAfter: cache.len,
+                top5: pick.top5, chosen: window.Vocab[pick.next],
+                p: pick.p, ms,
+                attn: pc.attn, q: pc.q, kv: pc.kv, gates: pc.layers.map(l => l.gates), decode: false });
+    steps.push({ kind: 'gen', di: 0, mod: 'lm-head', label: 'Prefill 预填充',
+      note: '整段 ' + ids.length + ' tokens 一次前向（Router 全程生效）→ K/V 进缓存 → ' +
+            samplingLabel() + ' 采样「' + window.Vocab[pick.next] + '」' });
+    genToks.push(window.Vocab[pick.next]);
+    genIds.push(pick.next);
+    let next = pick.next;
+
+    /* Decode：每步 1 个新 token；整段重算仅作耗时对照 */
+    for(let s = 1; s < 4 && next !== eos; s++){
+      t0 = performance.now();
+      const c = {};
+      r = M.forwardCached([next], cache, c);
+      ms = +(performance.now() - t0).toFixed(1);
+      const fullIds = ids.concat(genIds);
+      const tb = performance.now();
+      M.forward(fullIds);
+      const bms = +(performance.now() - tb).toFixed(1);
+      pick = sampleNext(r.logits[0]);
+      data.push({ prefix: tokens.concat(genToks), fwdLen: 1, cacheAfter: cache.len,
+                  top5: pick.top5, chosen: window.Vocab[pick.next],
+                  p: pick.p, ms, bms, baseLen: fullIds.length,
+                  attn: c.attn, q: c.q, kv: c.kv, gates: c.layers.map(l => l.gates),
+                  decode: true, fedTok: window.Vocab[next] });
       steps.push({ kind: 'gen', di: data.length - 1, mod: 'lm-head',
-        label: '生成第 ' + (s + 1) + ' 步',
-        note: '前缀 ' + (prefix.length + 1) + ' tokens → 选中「' +
-              window.Vocab[next] + '」' });
-      prefix = prefix.concat([next]);
+        label: 'Decode 第 ' + s + ' 步',
+        note: '只前向新 token「' + window.Vocab[next] + '」，前 ' + (cache.len - 1) +
+              ' 个位置的 K/V 读缓存 → 选中「' + window.Vocab[pick.next] + '」' });
+      next = pick.next;
       genToks.push(window.Vocab[next]);
-      if(next === window.Vocab.indexOf('<eos>')) break;
+      genIds.push(next);
     }
     steps.push({ kind: 'end', tokens: genToks, mod: 'lm-head', label: '生成结束' });
     this._genData = data;
@@ -4135,7 +4842,12 @@ const MoEDemo = {
         '<li><span class="log-note">' + s.html + '</span></li>');
     }else if(s.kind === 'gen'){
       const d = this._genData[s.di];
-      AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self' });
+      if(d.decode){
+        AttentionHeatmap.setData({ tokens: [d.fedTok], colTokens: d.prefix,
+                                   layers: d.attn, kind: 'self', q: d.q, kv: d.kv });
+      }else{
+        AttentionHeatmap.setData({ tokens: d.prefix, layers: d.attn, kind: 'self', q: d.q, kv: d.kv });
+      }
       ArchitectureRenderer.highlight(['lnf']);
       /* 汇总本步专家负载 */
       const load = [0, 0, 0, 0];
@@ -4144,10 +4856,16 @@ const MoEDemo = {
         order.forEach(e => load[e]++);
       }));
       log.insertAdjacentHTML('beforeend',
-        '<li class="current"><span class="log-step">' + s.label + '</span>' +
+        '<li class="current"><span class="log-step">' + s.label +
+        (d.decode
+          ? ' · 只前向 1 token · 缓存 ' + d.cacheAfter + ' 条 K/V'
+          : ' · 整段 ' + d.fwdLen + ' tokens 并入缓存') + '</span>' +
         TopKChart.render(d.top5) +
-        '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
-        ' · ' + d.ms + ' ms · 专家负载 ' +
+        '<span class="log-meta">采样「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        ' · ' + samplingLabel() +
+        ' · 增量前向 ' + d.ms + ' ms' +
+        (d.decode ? ' <i>（整段重算对照 ' + d.baseLen + ' tk ' + d.bms + ' ms）</i>' : '') +
+        ' · 专家负载 ' +
         load.map((v, i) => 'E' + (i + 1) + '×' + v).join(' · ') + '</span></li>');
     }else if(s.kind === 'end'){
       ArchitectureRenderer.highlight(['lnf']);

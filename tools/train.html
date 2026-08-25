@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>预训练权重生成器 · TinyShakespeare 字符级</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js" crossorigin="anonymous"></script>
+<style>
+  body{font:14px/1.7 ui-monospace,monospace;max-width:860px;margin:24px auto;padding:0 16px;}
+  pre{background:#f5f5f5;padding:10px;border-radius:8px;white-space:pre-wrap;word-break:break-all;}
+  .ok{color:#0a7d32;font-weight:bold;} .err{color:#c62828;font-weight:bold;}
+</style>
+</head>
+<body>
+<h2>预训练权重生成器</h2>
+<p>架构与主应用 <code>ModernDecoder</code> 严格一致：RMSNorm + RoPE + GQA(hkv=h/4) + SwiGLU + 权重绑定，字符级 TinyShakespeare。<br>
+超参：d_model=128 · heads=4 (hkv=1) · layers=3 · dff=341 —— 与 Config 选项 (128/4/3) 对齐。</p>
+<div id="status">初始化…</div>
+<pre id="log"></pre>
+<script>
+'use strict';
+/* ---------- 超参（与主应用 Config 128/4/3 对齐） ---------- */
+const D = 128, H = 4, HKV = 1, N = 3, DH = D / H, DFF = Math.floor(8 / 3 * D);
+const T = 96, B = 16, STEPS = Number(new URLSearchParams(location.search).get('steps')) || 2000, LR = 1e-3;
+const logEl = document.getElementById('log'), stEl = document.getElementById('status');
+const log = s => { logEl.textContent += s + '\n'; };
+
+/* ---------- 与主应用一致的算子 ---------- */
+const glorot = shp => tf.randomNormal(shp, 0, Math.sqrt(2 / (shp[0] + shp[1])));
+const toVar = t => { const v = tf.variable(t); t.dispose(); return v; };
+function rmsNorm(x, g){
+  const ms = x.square().mean(-1, true);
+  return x.div(ms.add(1e-6).sqrt()).mul(g);
+}
+function ropeApply(x, offset){
+  const half = DH / 2;
+  const inv = tf.range(0, half).toFloat()
+    .mul(-Math.log(10000) * 2 / DH).exp().reshape([1, 1, 1, half]);
+  const ang = tf.range(0, x.shape[2]).toFloat().add(offset)
+    .reshape([1, 1, x.shape[2], 1]).mul(inv);
+  const cos = ang.cos(), sin = ang.sin();
+  const a = x.slice([0, 0, 0, 0], [-1, -1, -1, half]);
+  const b = x.slice([0, 0, 0, half], [-1, -1, -1, half]);
+  return tf.concat([a.mul(cos).sub(b.mul(sin)), a.mul(sin).add(b.mul(cos))], -1);
+}
+function causalMask(L){
+  return tf.where(
+    tf.greater(tf.range(0, L).reshape([1, L]), tf.range(0, L).reshape([L, 1])),
+    tf.fill([L, L], -1e9), tf.zeros([L, L])).reshape([1, 1, L, L]);
+}
+
+/* ---------- 模型变量（布局与主应用 build() 一致） ---------- */
+let V = 0, embed, gF, layers = [], dataIds = [], itos = [];
+function build(){
+  embed = toVar(glorot([V, D]));
+  gF = toVar(tf.ones([D]));
+  for(let i = 0; i < N; i++){
+    layers.push({
+      g1: toVar(tf.ones([D])), g2: toVar(tf.ones([D])),
+      WQ: toVar(glorot([D, H * DH])),
+      WK: toVar(glorot([D, HKV * DH])),
+      WV: toVar(glorot([D, HKV * DH])),
+      WO: toVar(glorot([H * DH, D])),
+      Wswg: toVar(glorot([D, DFF])),
+      Wswu: toVar(glorot([D, DFF])),
+      Wswd: toVar(glorot([DFF, D]))
+    });
+  }
+}
+/** 整段前向（训练用，返回全部位置 logits）。
+ *  注意：权重一律与 2D 激活相乘——tfjs 4.22 对「3D×2D 变量」的批量 matMul 梯度有 bug */
+function forward(ids){
+  const L = ids.shape[1], rep = H / HKV, BT = B * L;
+  let x = tf.gather(embed, ids).reshape([B, L, D]);
+  const mask = causalMask(L);
+  for(const W of layers){
+    const h = rmsNorm(x, W.g1).reshape([BT, D]);
+    const q = ropeApply(h.matMul(W.WQ).reshape([B, L, H, DH]).transpose([0, 2, 1, 3]), 0);
+    const k = ropeApply(h.matMul(W.WK).reshape([B, L, HKV, DH]).transpose([0, 2, 1, 3]), 0);
+    const v = h.matMul(W.WV).reshape([B, L, HKV, DH]).transpose([0, 2, 1, 3]);
+    const kT = rep > 1 ? k.tile([1, rep, 1, 1]) : k;
+    const vT = rep > 1 ? v.tile([1, rep, 1, 1]) : v;
+    const wgt = tf.softmax(q.matMul(kT, false, true).div(Math.sqrt(DH)).add(mask), -1);
+    x = x.add(wgt.matMul(vT).transpose([0, 2, 1, 3])
+      .reshape([BT, H * DH]).matMul(W.WO).reshape([B, L, D]));
+    const h2 = rmsNorm(x, W.g2).reshape([BT, D]);
+    const g = h2.matMul(W.Wswg);
+    x = x.add(g.mul(tf.sigmoid(g)).mul(h2.matMul(W.Wswu))
+      .matMul(W.Wswd).reshape([B, L, D]));
+  }
+  /* logits = h·Eᵀ（权重绑定）；转置置于非变量侧，绕开 tfjs 变量转置梯度 bug */
+  const hF = rmsNorm(x, gF).reshape([BT, D]);
+  return tf.matMul(embed, hF, false, true).transpose().reshape([B, L, V]);
+}
+
+/* ---------- 训练 ---------- */
+async function main(){
+  await tf.ready();
+  stEl.innerHTML = '后端：' + tf.getBackend();
+  const raw = await (await fetch('../assets/corpus.txt')).text();
+  const chars = [...new Set(raw)].sort();
+  itos = chars;
+  const stoi = Object.fromEntries(chars.map((c, i) => [c, i]));
+  dataIds = [...raw].map(c => stoi[c]);
+  V = chars.length;
+  log('语料 ' + raw.length + ' 字符 · 词表 ' + V);
+  build();
+  const nParam = 1 + layers.reduce((a, W) => a + Object.values(W)
+    .reduce((s, v) => s + v.size, 0), embed.size);
+  log('参数量 ≈ ' + (nParam / 1e3).toFixed(0) + 'K');
+
+  window.__train = { step: 0, total: STEPS, loss: null, hist: [], sample: '', done: false, error: null };
+  const opt = tf.train.adam(LR);
+  const getBatch = () => {
+    const buf = tf.buffer([B, T + 1], 'int32');
+    for(let b = 0; b < B; b++){
+      const s = Math.floor(Math.random() * (dataIds.length - T - 1));
+      for(let t = 0; t <= T; t++) buf.set(dataIds[s + t], b, t);
+    }
+    const seq = buf.toTensor();
+    const x = seq.slice([0, 0], [B, T]);
+    const y = seq.slice([0, 1], [B, T]);
+    return { x, y };
+  };
+  const prompt = 'First Citizen:\n';
+  const pIds = [...prompt].map(c => stoi[c]);
+
+  for(let step = 1; step <= STEPS; step++){
+    const { x, y } = getBatch();
+    const loss = opt.minimize(() => {
+      const lg = forward(x).reshape([-1, V]);
+      const lp = tf.logSoftmax(lg);
+      return lp.mul(tf.oneHot(y.reshape([-1]).toInt(), V)).sum(-1).neg().mean();
+    }, true);
+    const lv = loss.dataSync()[0]; loss.dispose(); x.dispose(); y.dispose();
+    window.__train.step = step; window.__train.loss = lv;
+    window.__train.hist.push(+lv.toFixed(4));
+    if(step % 50 === 0) log('step ' + step + '/' + STEPS + '  loss ' + lv.toFixed(4));
+    if(step % 400 === 0 || step === STEPS){
+      window.__train.sample = sampleGreedy(pIds, 80);
+      log('── 采样：「' + window.__train.sample.replace(/\n/g, '⏎') + '」');
+    }
+    await tf.nextFrame();
+  }
+  window.__train.done = true;
+  stEl.innerHTML = '<span class="ok">训练完成 ✓</span> 最终 loss ' +
+    window.__train.hist[window.__train.hist.length - 1] +
+    ' —— 在控制台运行 <code>__export()</code> 导出';
+}
+/** 贪心续写（训练中抽样观察用）：取末位置 argmax */
+function sampleGreedy(pIds, n){
+  let out = '';
+  tf.tidy(() => {
+    let ctx = pIds.slice();
+    for(let i = 0; i < n; i++){
+      const L = Math.min(ctx.length, T);
+      const inp = tf.tensor2d([ctx.slice(-T)], [1, L], 'int32');
+      const lg = forward1(inp);                       // [1,L,V]
+      const next = lg.reshape([L, V]).slice([L - 1, 0], [1, V])
+        .argMax(-1).dataSync()[0];
+      inp.dispose(); lg.dispose();
+      ctx = ctx.concat([next]); out += itos[next];
+    }
+  });
+  return out;
+}
+/* 单条推理（batch=1） */
+function forward1(ids){
+  const L = ids.shape[1], rep = H / HKV;
+  let x = tf.gather(embed, ids).reshape([1, L, D]);
+  const mask = causalMask(L);
+  for(const W of layers){
+    const h = rmsNorm(x, W.g1);
+    const q = ropeApply(h.matMul(W.WQ).reshape([1, L, H, DH]).transpose([0, 2, 1, 3]), 0);
+    const k = ropeApply(h.matMul(W.WK).reshape([1, L, HKV, DH]).transpose([0, 2, 1, 3]), 0);
+    const v = h.matMul(W.WV).reshape([1, L, HKV, DH]).transpose([0, 2, 1, 3]);
+    const kT = rep > 1 ? k.tile([1, rep, 1, 1]) : k;
+    const vT = rep > 1 ? v.tile([1, rep, 1, 1]) : v;
+    const wgt = tf.softmax(q.matMul(kT, false, true).div(Math.sqrt(DH)).add(mask), -1);
+    x = x.add(wgt.matMul(vT).transpose([0, 2, 1, 3]).reshape([1, L, H * DH]).matMul(W.WO));
+    const h2 = rmsNorm(x, W.g2);
+    const g = h2.matMul(W.Wswg);
+    x = x.add(g.mul(tf.sigmoid(g)).mul(h2.matMul(W.Wswu)).matMul(W.Wswd));
+  }
+  return rmsNorm(x, gF).matMul(embed.transpose());
+}
+/** 导出权重 JSON（与主应用 ModernDecoder 布局一致，保留 5 位小数） */
+window.__export = () => {
+  const r5 = a => Array.from(a, v => +v.toFixed(5));
+  /* loss 历史降采样到 ~200 点（主应用微调图表基线用） */
+  const h = window.__train.hist;
+  const stride = Math.max(1, Math.ceil(h.length / 200));
+  const lossHist = h.filter((_, i) => i % stride === 0);
+  const obj = {
+    meta: { vocab: itos.join(''), d: D, h: H, hkv: HKV, N, dff: DFF,
+            finalLoss: window.__train.hist[window.__train.hist.length - 1],
+            lossHist,
+            corpus: 'tiny shakespeare (first 400KB, char-level)' },
+    embed: r5(embed.arraySync().flat()),
+    gF: r5(gF.arraySync()),
+    layers: layers.map(W => Object.fromEntries(
+      Object.entries(W).map(([k, v]) => [k, r5(v.arraySync().flat())])))
+  };
+  return JSON.stringify(obj);
+};
+main().catch(e => { window.__train = { error: String(e) }; logEl.innerHTML += '<span class="err">' + e + '</span>'; });
+</script>
+</body>
+</html>
