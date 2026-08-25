@@ -11,7 +11,7 @@
         D3.js 绘制架构图与注意力热力图，KaTeX 渲染公式。
   ============================================================
 -->
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -55,15 +55,96 @@
   --font-mono:"JetBrains Mono","Fira Code",Consolas,"Noto Sans SC",monospace;
 }
 html[data-theme="dark"]{
-  --c-primary:#8c9eff;
-  --c-primary-light:#aab6ff;
-  --c-accent:#ffa040;
-  --c-bg:#0f1420;
-  --c-card:#171e30;
-  --c-text:#e8ecf4;
-  --c-text-dim:#9aa6ba;
-  --c-border:#2a3450;
-  --c-code-bg:#101726;
+  --c-primary:#7c8cff;
+  --c-primary-light:#9fb0ff;
+  --c-accent:#00e5ff;
+  --c-bg:#070b16;
+  --c-card:#101828f2;
+  --c-text:#e6edff;
+  --c-text-dim:#8b97b8;
+  --c-border:#1d2a4a;
+  --c-code-bg:#0b1222;
+  --glow-primary:0 0 12px rgba(124,140,255,.45);
+  --glow-accent:0 0 14px rgba(0,229,255,.4);
+}
+/* ---------- 深色科技感主题（Neon / 玻璃拟态） ---------- */
+html[data-theme="dark"] body{
+  background:
+    radial-gradient(1100px 500px at 15% -10%, rgba(64,80,220,.18), transparent 60%),
+    radial-gradient(900px 450px at 95% 0%, rgba(0,229,255,.08), transparent 55%),
+    linear-gradient(rgba(29,42,74,.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29,42,74,.35) 1px, transparent 1px),
+    var(--c-bg);
+  background-size:auto,auto,42px 42px,42px 42px,auto;
+}
+html[data-theme="dark"] #topbar{
+  background:linear-gradient(90deg,#101a3a,#0a1128 55%,#06202e);
+  color:var(--c-primary-light);
+  border-bottom:1px solid #26355f;
+  box-shadow:0 2px 18px rgba(0,229,255,.12), inset 0 -1px 0 rgba(0,229,255,.25);
+}
+html[data-theme="dark"] #topbar h1{
+  color:#dfe7ff;
+  text-shadow:0 0 14px rgba(124,140,255,.65);
+  letter-spacing:1.5px;
+}
+html[data-theme="dark"] #version-tag{color:var(--c-accent);border-color:var(--c-accent);text-shadow:var(--glow-accent);}
+html[data-theme="dark"] .panel{
+  backdrop-filter:blur(10px);
+  border-color:#22305a;
+  box-shadow:0 0 0 1px rgba(124,140,255,.06), 0 8px 30px rgba(3,8,20,.6),
+             inset 0 1px 0 rgba(159,176,255,.07);
+}
+html[data-theme="dark"] .panel h2{
+  color:var(--c-primary-light);
+  border-bottom:none;
+  text-shadow:0 0 10px rgba(124,140,255,.5);
+}
+html[data-theme="dark"] .panel h2::after{
+  content:"";display:block;height:2px;margin-top:6px;border-radius:2px;
+  background:linear-gradient(90deg,var(--c-accent),transparent);
+  box-shadow:var(--glow-accent);
+}
+html[data-theme="dark"] .subcard{
+  background:rgba(13,20,38,.72);
+  border:1px solid #1e2b52;
+  box-shadow:inset 0 1px 0 rgba(159,176,255,.05);
+}
+html[data-theme="dark"] .btn,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea{
+  background:rgba(13,20,38,.85);
+  border:1px solid #24356a;
+  color:var(--c-text);
+}
+html[data-theme="dark"] .btn:hover{border-color:var(--c-accent);box-shadow:var(--glow-accent);}
+html[data-theme="dark"] .btn-primary{
+  background:linear-gradient(135deg,#2c3fa0,#1a237e);
+  border:1px solid #4a5fd4;color:#fff;
+  box-shadow:var(--glow-primary);
+}
+html[data-theme="dark"] .btn-primary{color:#fff;}
+html[data-theme="dark"] .btn-accent{
+  background:linear-gradient(135deg,#00b8cc,#0088a3);
+  border:1px solid #22dbe8;color:#03121a;
+  box-shadow:var(--glow-accent);
+}
+html[data-theme="dark"] .seg button.on{
+  background:linear-gradient(135deg,rgba(124,140,255,.28),rgba(0,229,255,.14));
+  border:1px solid var(--c-accent);
+  color:#dff6ff;text-shadow:0 0 8px rgba(0,229,255,.8);
+  box-shadow:inset 0 0 12px rgba(0,229,255,.12);
+}
+html[data-theme="dark"] .tl-item.active::before,
+html[data-theme="dark"] .tl-item:hover::before{
+  box-shadow:0 0 0 4px rgba(0,229,255,.18), var(--glow-accent);
+}
+html[data-theme="dark"] .tl-era{border-left-color:var(--c-accent);}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#24356a;border-radius:6px;}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover{background:var(--c-accent);}
+html[data-theme="dark"] .chip{
+  background:rgba(0,229,255,.09);color:var(--c-accent);
+  border:1px solid rgba(0,229,255,.35);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;}
@@ -205,6 +286,16 @@ html[data-theme="dark"] .seg button.on{color:#0f1420;}
 .mv-overlay{position:fixed;inset:0;background:rgba(8,10,18,.55);z-index:160;
   display:none;align-items:center;justify-content:center;padding:24px;}
 .mv-overlay.open{display:flex;}
+
+/* ---------- 功能说明浮层 ---------- */
+#help-overlay .mv-card{max-width:min(94vw,760px);}
+.help-sec{margin-bottom:16px;}
+.help-sec h5{font-size:14px;margin:0 0 6px;color:var(--c-primary);
+  border-left:3px solid var(--c-accent);padding-left:8px;}
+html[data-theme="dark"] .help-sec h5{color:var(--c-primary-light);text-shadow:0 0 8px rgba(124,140,255,.45);}
+.help-sec ul{margin:0;padding-left:20px;line-height:1.75;font-size:13.5px;}
+.help-sec b{color:var(--c-primary);font-weight:700;}
+html[data-theme="dark"] .help-sec b{color:var(--c-accent);}
 .mv-card{background:var(--c-card);border:1px solid var(--c-border);border-radius:14px;
   padding:16px 18px;max-width:min(94vw,980px);max-height:88vh;overflow:auto;
   box-shadow:0 18px 60px rgba(0,0,0,.35);}
@@ -401,6 +492,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   <h1>Transformer 架构演进交互式可视化</h1>
   <span id="version-tag">v2.3.0</span>
   <span class="spacer"></span>
+  <button id="help-toggle" class="btn" title="功能说明：这个页面是什么、怎么用">❓ 功能说明</button>
   <button id="theme-toggle" class="btn" title="切换深浅主题">🌙 深色模式</button>
 </header>
 
@@ -483,6 +575,42 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
         </div>
         <div class="mv-cap" id="nv-cap"></div>
         <div id="nv-body"></div>
+      </div>
+    </div>
+    <div id="help-overlay" class="mv-overlay">
+      <div class="mv-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h4>📖 功能说明 · 这个页面怎么用</h4>
+          <button id="help-close" class="seg" style="padding:4px 10px;">✕</button>
+        </div>
+        <div class="mv-cap">三分钟看懂整个演示的三栏布局与核心玩法。</div>
+        <div class="help-sec">
+          <h5>整体布局：左 · 中 · 右</h5>
+          <ul>
+            <li><b>左栏「时间轴」</b>：1943 → 2026 的里程碑论文线，按四个阶段分组。点任意节点，中间架构图会高亮对应模块，并弹出解释抽屉（公式 / 张量形状 / 参数量）。</li>
+            <li><b>中栏「架构图 + 图表」</b>：上方是当前架构视图的结构图——点图中任意模块同样弹出解释；下方是注意力热力图（可切层/头/Softmax 前后），以及 Model View（全层×全头总览）和 Neuron View（Q·K 逐维分解）。</li>
+            <li><b>右栏「运行台」</b>：输入文本 → 分词 → 选超参数 → ▶ 运行。这是<b>真实的 TensorFlow.js 前向传播</b>，不是动画模拟；底部控制台可以播放/暂停/单步，点日志任意一步跳转看解释。</li>
+          </ul>
+        </div>
+        <div class="help-sec">
+          <h5>顶部一排视图按钮是什么关系？</h5>
+          <ul>
+            <li>它们不是并列功能，而是<b>架构演进的时间线</b>：「前传·基石」(1943-2016) → 「前史 RNN→2017」→「2017 原版」→ 现代 Dense/MoE → 各技术分流（Attention 演进、线性 SSM、生成范式、前沿探索、训练对齐）。</li>
+            <li>推荐路线：<b>2017 原版</b> 看懂 Encoder-Decoder → 切到 <b>Decoder-Only·Dense</b> 对比 GPT/LLaMA 的差别 → 再按兴趣分流。</li>
+          </ul>
+        </div>
+        <div class="help-sec">
+          <h5>让生成"真的会说人话"</h5>
+          <ul>
+            <li>默认权重是随机初始化的——输出乱码是<b>预期行为</b>，演示的是机制而非语言能力。</li>
+            <li>右上「🎓 训练台」→ 一键加载 TinyShakespeare 预训练权重后，生成即有语义；还可以点「⚡ 微调」跑真实反向传播看 loss 下降。</li>
+            <li>KV Cache 开关可对照「每步只算新 token」vs「整段重算」的差异；采样滑杆（temperature/top-k/top-p）实时改变下一个词的概率分布图。</li>
+          </ul>
+        </div>
+        <div class="help-sec">
+          <h5>更多细节文档</h5>
+          <ul><li>见项目仓库 <b>docs/功能说明.md</b>（本浮层的完整版，含术语表与常见问题）。</li></ul>
+        </div>
       </div>
     </div>
     <div id="wt-overlay" class="mv-overlay">
@@ -5326,7 +5454,7 @@ document.querySelectorAll('#view-seg button').forEach(b =>
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
   const saved=localStorage.getItem('theme');
-  if(saved) document.documentElement.dataset.theme=saved;
+  document.documentElement.dataset.theme=saved||'dark';
   syncLabel();
   btn.addEventListener('click',()=>{
     const cur=document.documentElement.dataset.theme==='dark'?'dark':'light';
@@ -5338,6 +5466,19 @@ document.querySelectorAll('#view-seg button').forEach(b =>
   function syncLabel(){
     const dark=document.documentElement.dataset.theme==='dark';
     btn.textContent=dark?'☀️ 浅色模式':'🌙 深色模式';
+  }
+})();
+
+/* 功能说明浮层 */
+(function initHelp(){
+  const ov=document.getElementById('help-overlay');
+  document.getElementById('help-toggle').addEventListener('click',()=>ov.classList.add('open'));
+  document.getElementById('help-close').addEventListener('click',()=>ov.classList.remove('open'));
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') ov.classList.remove('open'); });
+  if(!localStorage.getItem('helpSeen')){
+    ov.classList.add('open');
+    localStorage.setItem('helpSeen','1');
   }
 })();
 </script>
