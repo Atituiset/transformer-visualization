@@ -7,15 +7,15 @@
 const MODULE_DETAILS = {
   'input': {
     title: 'Input Tokens',
-    desc: '源序列经分词得到 token 序列，再映射为词表索引。',
+    desc: 'The source sequence is tokenized, then mapped to vocabulary indices.',
     latex: ['x=[x_1,x_2,\\dots,x_n],\\; x_i\\in\\mathbb{Z},\\; x_i<|V|'],
     shapes: ['[seq_len]', '[batch, seq_len, d_model]'],
     code: "const ids = tokens.map(t => Vocab.indexOf(t));\nconst idx = tf.tensor1d(ids, 'int32');",
-    params: '0（仅查索引）'
+    params: '0 (index lookup only)'
   },
   'embed': {
     title: 'Input Embedding',
-    desc: '词表索引映射为 d_model 维向量，并乘 √d_model 放大（原论文做法），随后与位置编码相加。',
+    desc: 'Vocab indices map to d_model vectors, scaled by √d_model (original-paper practice), then added to positional encoding.',
     latex: [
       '\\text{Emb}(x)=E[x]\\cdot\\sqrt{d_{model}}',
       'E\\in\\mathbb{R}^{|V|\\times d_{model}}'
@@ -26,62 +26,62 @@ const MODULE_DETAILS = {
   },
   'pe': {
     title: 'Positional Encoding',
-    desc: '正弦/余弦函数为每个位置生成唯一的“时钟指纹”，使模型感知词序；与嵌入逐元素相加。',
+    desc: 'Sinusoidal functions give each position a unique clock fingerprint so the model senses word order; added element-wise to embeddings.',
     latex: [
       'PE_{(pos,\\,2i)}=\\sin\\!\\left(\\frac{pos}{10000^{2i/d_{model}}}\\right)',
       'PE_{(pos,\\,2i+1)}=\\cos\\!\\left(\\frac{pos}{10000^{2i/d_{model}}}\\right)'
     ],
-    shapes: ['[1, max_len, d_model]', '相加后 [batch, seq_len, d_model]'],
-    code: "const denom = Math.pow(10000, (2 * i) / dModel);\npe[pos*dModel+i]   = Math.sin(pos / denom); // 偶数维\npe[pos*dModel+i+1] = Math.cos(pos / denom); // 奇数维\nconst peTensor = tf.tensor3d(pe, [1, maxLen, dModel]);",
-    params: '0（固定函数，无可训练参数）'
+    shapes: ['[1, max_len, d_model]', 'after addition [batch, seq_len, d_model]'],
+    code: "const denom = Math.pow(10000, (2 * i) / dModel);\npe[pos*dModel+i]   = Math.sin(pos / denom); // even dims\npe[pos*dModel+i+1] = Math.cos(pos / denom); // odd dims\nconst peTensor = tf.tensor3d(pe, [1, maxLen, dModel]);",
+    params: '0 (fixed function, no trainable parameters)'
   },
   'enc-mha': {
     title: 'Multi-Head Self-Attention',
-    desc: '每个位置同时作为 Query/Key/Value，从全序列聚合信息；h 个头在不同子空间并行计算后拼接。',
+    desc: 'Every position acts as Query/Key/Value simultaneously, aggregating information across the sequence; h heads compute in different subspaces in parallel, then concatenate.',
     latex: [
       '\\text{Attention}(Q,K,V)=\\text{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V',
       '\\text{head}_i=\\text{Attention}(QW_i^Q,\\,KW_i^K,\\,VW_i^V)',
       '\\text{MultiHead}(Q,K,V)=\\text{Concat}(\\text{head}_1,\\dots,\\text{head}_h)\\,W^O'
     ],
-    shapes: ['[batch, seq_len, d_model]', '中间 [batch, h, seq_len, d_k]', '[batch, seq_len, d_model]'],
-    code: "const scores  = tf.matMul(Q, K, false, true).div(Math.sqrt(dk));\nconst weights = tf.softmax(scores, -1);          // [B,H,L,L]\nconst output  = tf.matMul(weights, V);           // 加权求和 V\n// 多头：reshape([B,L,h,dh]).transpose([0,2,1,3]) 拆头，逆操作拼回",
-    params: '4·(d² + d)　（W^Q,W^K,W^V,W^O 及偏置）'
+    shapes: ['[batch, seq_len, d_model]', 'intermediate [batch, h, seq_len, d_k]', '[batch, seq_len, d_model]'],
+    code: "const scores  = tf.matMul(Q, K, false, true).div(Math.sqrt(dk));\nconst weights = tf.softmax(scores, -1);          // [B,H,L,L]\nconst output  = tf.matMul(weights, V);           // weighted sum of V\n// multi-head: reshape([B,L,h,dh]).transpose([0,2,1,3]) splits heads; inverse merges back",
+    params: '4·(d² + d)  (W^Q,W^K,W^V,W^O and biases)'
   },
   'dec-masked-mha': {
     title: 'Masked Multi-Head Attention (Decoder)',
-    desc: '解码器只能看见已生成的前缀：上三角位置在 softmax 前被置为 −∞，概率归零，防止“偷看未来”。',
+    desc: 'The decoder sees only the generated prefix: upper-triangle positions are set to −∞ before softmax so their probability is zero — no peeking at the future.',
     latex: [
       '\\text{Attention}(Q,K,V)=\\text{softmax}\\!\\left(\\frac{QK^T}{\\sqrt{d_k}}+M\\right)V',
       'M_{ij}=\\begin{cases}0 & j\\le i\\\\ -\\infty & j>i\\end{cases}'
     ],
-    shapes: ['[batch, Lt, d_model]', '掩码 [1, 1, Lt, Lt]', '[batch, Lt, d_model]'],
-    code: "// 下三角 0 / 其余 -1e9 的加性掩码\nconst mask = tf.where(\n  tf.greater(tf.range(0,L).reshape([1,L]),\n             tf.range(0,L).reshape([L,1])),\n  tf.fill([L,L], -1e9), tf.zeros([L,L]));\nconst masked = scores.add(mask.reshape([1,1,L,L]));",
+    shapes: ['[batch, Lt, d_model]', 'mask [1, 1, Lt, Lt]', '[batch, Lt, d_model]'],
+    code: "// additive mask: 0 lower triangle / -1e9 elsewhere\nconst mask = tf.where(\n  tf.greater(tf.range(0,L).reshape([1,L]),\n             tf.range(0,L).reshape([L,1])),\n  tf.fill([L,L], -1e9), tf.zeros([L,L]));\nconst masked = scores.add(mask.reshape([1,1,L,L]));",
     params: '4·(d² + d)'
   },
   'dec-cross': {
     title: 'Cross-Attention',
-    desc: '解码器的 Encoder-Decoder Attention：Q 来自解码器当前层，K/V 来自编码器最终输出——源句信息的唯一入口（2014 年 Seq2Seq+Attention 思想的继承者）。',
+    desc: 'The decoder\'s Encoder-Decoder attention: Q from the decoder\'s current layer, K/V from the encoder\'s final output — the sole gateway for source information (heir to the 2014 Seq2Seq+attention idea).',
     latex: [
       '\\text{head}_i=\\text{Attention}(H_{dec}W_i^Q,\\,H_{enc}W_i^K,\\,H_{enc}W_i^V)'
     ],
-    shapes: ['Q [batch, Lt, d_model]', 'K/V [batch, Ls, d_model]', '输出 [batch, Lt, d_model]'],
-    code: "const c = crossMha.forward(hDec, encOut, encOut, null);\n// Q ← 解码器隐状态；K/V ← 编码器输出（同一线性投影族）",
+    shapes: ['Q [batch, Lt, d_model]', 'K/V [batch, Ls, d_model]', 'output [batch, Lt, d_model]'],
+    code: "const c = crossMha.forward(hDec, encOut, encOut, null);\n// Q from decoder hidden state; K/V from encoder output (same projection family)",
     params: '4·(d² + d)'
   },
   'addnorm': {
     title: 'Residual Connection + LayerNorm (Add & Norm)',
-    desc: '残差旁路让梯度直达底层、可堆叠深层网络；LayerNorm 稳定各层激活分布。',
+    desc: 'Residual bypasses let gradients reach the bottom layers directly, enabling deep stacking; LayerNorm stabilizes each layer\'s activation distribution.',
     latex: [
       'h=\\text{LayerNorm}\\big(x+\\text{Sublayer}(x)\\big)',
       '\\text{LN}(x)=\\gamma\\odot\\frac{x-\\mu}{\\sqrt{\\sigma^2+\\varepsilon}}+\\beta'
     ],
-    shapes: ['[batch, seq_len, d_model]', '形状不变（逐元素）'],
+    shapes: ['[batch, seq_len, d_model]', 'shape preserved (element-wise)'],
     code: "const { mean, variance } = tf.moments(x, -1, true);\nconst y = x.sub(mean)\n           .div(variance.add(1e-6).sqrt())\n           .mul(gamma).add(beta);\n// Add & Norm：ln(x.add(sublayerOut))",
-    params: '每处 2·d（γ 与 β）；每层共 2 处 → 4·d'
+    params: '2·d per instance (γ and β); two instances per layer → 4·d'
   },
   'ffn': {
     title: 'Feed-Forward Network',
-    desc: '逐位置独立的两层 MLP：先扩维到 d_ff（512→2048），ReLU 后再投回 d_model。参数量的大头。',
+    desc: 'An independent two-layer MLP per position: expand to d_ff (512→2048), ReLU, project back to d_model. The bulk of parameters.',
     latex: [
       '\\text{FFN}(x)=\\max\\!(0,\\,xW_1+b_1)W_2+b_2'
     ],
@@ -91,31 +91,31 @@ const MODULE_DETAILS = {
   },
   'enc-stack': {
     title: 'Full Encoder block (x N layers)',
-    desc: '上述子层串联为一层，堆叠 N 层（原论文 N=6）。所有位置完全并行，无循环依赖。',
+    desc: 'The sublayers above chain into one block, stacked N times (N=6 in the original paper). All positions fully parallel, no recurrent dependence.',
     latex: [
       'H^{(l)}=\\text{LN}\\Big(H^{(l-1)}+\\text{FFN}\\big(\\text{LN}(H^{(l-1)}+\\text{MHA}(H^{(l-1)}))\\big)\\Big)'
     ],
-    shapes: ['输入 [batch, seq_len, d_model]', 'N 层间形状不变', '输出 [batch, seq_len, d_model]'],
+    shapes: ['input [batch, seq_len, d_model]', 'shape unchanged between N layers', 'output [batch, seq_len, d_model]'],
     code: "for (let l = 0; l < numLayers; l++) {\n  const r = encLayers[l].forward(x); // MHA → Add&Norm → FFN → Add&Norm\n  x = r.output;\n}",
-    params: '每层 4·(d²+d) + 2·d·f + f + 5·d，× N 层'
+    params: 'per layer 4·(d²+d) + 2·d·f + f + 5·d, × N layers'
   },
   'dec-stack': {
     title: 'Full Decoder block (x N layers)',
-    desc: '每层比 Encoder 多一个Cross-Attention子块；自注意力带因果掩码，保证第 t 步只依赖 < t 步。',
+    desc: 'Each layer adds a Cross-Attention subblock over the Encoder\'s; self-attention carries a causal mask so step t depends only on steps < t.',
     latex: [
       'z=\\text{LN}_1(x+\\text{MaskedMHA}(x)),\\; z^{\\prime}=\\text{LN}_2\\big(z+\\text{CrossAttn}(z,\\,H_{enc})\\big)'
     ],
-    shapes: ['目标输入 [batch, Lt, d_model]', 'Cross-Attention K/V [batch, Ls, d_model]', '输出 [batch, Lt, d_model]'],
+    shapes: ['target input [batch, Lt, d_model]', 'Cross-Attention K/V [batch, Ls, d_model]', 'output [batch, Lt, d_model]'],
     code: "for (const layer of decLayers) {\n  const r = layer.forward(y, encOut, causalMask(Lt));\n  y = r.output;\n}",
-    params: '每层 8·(d²+d) + 2·d·f + f + 7·d，× N 层'
+    params: 'per layer 8·(d²+d) + 2·d·f + f + 7·d, × N layers'
   },
   'out': {
     title: 'Output projection + Softmax',
-    desc: '解码器末位置隐状态投影到词表维度，softmax 得到下一个 token 的概率分布（逐词生成循环）。注意：本演示权重为随机初始化，分布仅展示机制而非语言能力。',
+    desc: 'The decoder\'s last-position hidden state projects to vocab dimension; softmax yields the next-token distribution (the word-by-word generation loop). Note: this demo\'s weights are randomly initialized — the distribution demonstrates mechanism, not language ability.',
     latex: [
       'P(u\\,|\\,x)=\\text{softmax}\\big(H_L W_{out}+b\\big),\\quad W_{out}\\in\\mathbb{R}^{d\\times|V|}'
     ],
-    shapes: ['[batch, 1, d_model]', '[batch, |V|]', '概率和为 1'],
+    shapes: ['[batch, 1, d_model]', '[batch, |V|]', 'probabilities sum to 1'],
     code: "const last = y.slice([0, Lt-1, 0], [1, 1, dModel]);\nconst logits = last.matMul(Wout).add(bout); // [1,1,V]\nconst probs  = tf.softmax(logits, -1);",
     params: 'd × V + V'
   },
@@ -123,98 +123,98 @@ const MODULE_DETAILS = {
   /* ============ 前史（RNN → Transformer） ============ */
   'rnn': {
     title: 'Vanilla RNN (Elman, 1990)',
-    desc: '最原始的序列模型：隐藏状态沿时间逐步递推，上一步的输出是下一步的输入。理论上能记住任意长的历史，实际上梯度连乘导致只能记住约 10~20 步。',
+    desc: 'The most primitive sequence model: hidden state recurses through time, each step\'s output feeding the next. Theoretically remembers arbitrary history; in practice gradient products limit memory to ~10-20 steps.',
     latex: [
       'h_t=\\tanh(W_h h_{t-1}+W_x x_t+b),\\quad y_t=W_y h_t',
-      '\\frac{\\partial h_t}{\\partial h_0}=\\prod_{k\\le t} W_h^{\\top}\\text{diag}(\\varphi\\prime)\\ \\text{（连乘 → 消失/爆炸）}'
+      '\\frac{\\partial h_t}{\\partial h_0}=\\prod_{k\\le t} W_h^{\\top}\\text{diag}(\\varphi\\prime)\\ \\text{(repeated product → vanishing/exploding)}'
     ],
-    shapes: ['[batch, seq, d] 逐步展开','t 时刻必须等 t−1 算完（无法并行）'],
-    code: "h = tf.zeros([B, d]);\nfor (const x_t of xs)          // 必须串行\n  h = tf.tanh(h.matMul(Wh).add(x_t.matMul(Wx)));",
+    shapes: ['[batch, seq, d] unrolled step by step','step t must wait for t−1 (no parallelism)'],
+    code: "h = tf.zeros([B, d]);\nfor (const x_t of xs)          // must be serial\n  h = tf.tanh(h.matMul(Wh).add(x_t.matMul(Wx)));",
     params: 'd² + d·d + d',
     refs: ['Elman 1990 · Finding Structure in Time',
            'Rumelhart et al. 1986 · Learning representations by back-propagating errors']
   },
   'lstm': {
     title: 'LSTM (1997) and GRU (2014)',
-    desc: '给 RNN 装上「传送带」：细胞状态 cₜ 沿时间近似线性流动，三个门（输入/遗忘/输出）控制读写擦除，缓解梯度消失。GRU（2014）合并门结构、参数更少，效果相当。',
+    desc: 'A conveyor belt for the RNN: cell state cₜ flows near-linearly through time while three gates (input/forget/output) control reading, writing and erasing, easing vanishing gradients. GRU (2014) merged the gates — fewer parameters, comparable quality.',
     latex: [
       'c_t=f_t\\odot c_{t-1}+i_t\\odot\\tilde{c}_t,\\quad h_t=o_t\\odot\\tanh(c_t)',
-      'i_t=\\sigma(W_i[h_{t-1},x_t])\\ \\text{（遗忘/输出门同理）}'
+      'i_t=\\sigma(W_i[h_{t-1},x_t])\\ \\text{(forget/output gates analogous)}'
     ],
-    shapes: ['[batch, seq, 4d]（四门拼接一次算完）','c_t / h_t [batch, d]'],
-    code: "const gates = tf.matMul(tf.concat([h, x], 1), W);  // i f o g\nconst c = f.mul(cPrev).add(i.mul(tf.tanh(g)));     // 细胞状态更新\nconst h = o.mul(tf.tanh(c));",
-    params: '4·(d·(d+e)+d)（GRU 为 3 组）',
+    shapes: ['[batch, seq, 4d] (four gates concatenated, computed at once)','c_t / h_t [batch, d]'],
+    code: "const gates = tf.matMul(tf.concat([h, x], 1), W);  // i f o g\nconst c = f.mul(cPrev).add(i.mul(tf.tanh(g)));     // cell-state update\nconst h = o.mul(tf.tanh(c));",
+    params: '4·(d·(d+e)+d) (GRU has 3 sets)',
     refs: ['Hochreiter & Schmidhuber 1997 · Long Short-Term Memory',
            'Cho et al. 2014 · Learning Phrase Representations (GRU)']
   },
   's2s': {
     title: 'Seq2Seq（2014）',
-    desc: 'Encoder-Decoder 框架：编码器把变长源句压缩为一个固定向量 c，解码器从 c 逐步生成目标句。确立了「编码-解码」范式——但固定向量成为长句的性能瓶颈。',
+    desc: 'The Encoder-Decoder framework: the encoder compresses a variable-length source sentence into one fixed vector c, and the decoder generates the target sentence from it step by step. It established the encode-decode paradigm — but the fixed vector became a performance bottleneck for long sentences.',
     latex: [
       'c=\\text{Enc}(x_{1:n}),\\quad P(y)=\\prod_t P(y_t\\mid y_{<t},c)'
     ],
-    shapes: ['源句 [n, d] → c [d]（信息瓶颈）','目标句逐步生成'],
-    code: "const c = encodeRNN(src).slice([srcLen-1]);  // 末状态 = 整句\nlet h = c;\nfor (let t = 0; t < maxLen; t++) h = decodeRNN(h, yPrev);",
-    params: '2 组 RNN 参数',
+    shapes: ['source [n, d] → c [d] (information bottleneck)','target generated step by step'],
+    code: "const c = encodeRNN(src).slice([srcLen-1]);  // final state = whole sentence\nlet h = c;\nfor (let t = 0; t < maxLen; t++) h = decodeRNN(h, yPrev);",
+    params: 'two sets of RNN parameters',
     refs: ['Sutskever et al. 2014 · Sequence to Sequence Learning with Neural Networks']
   },
   'batt': {
     title: 'Additive Attention (Bahdanau, 2015)',
-    desc: '打破固定向量瓶颈：解码每一步动态回看编码器全部状态，按对齐分数 α 加权求和得到上下文。注意力权重可视化即「软对齐」——2017 自注意力的直系前身（同年 Luong 提出乘性/点积版本）。',
+    desc: 'Breaking the fixed-vector bottleneck: each decoding step dynamically attends over all encoder states, weighting them by alignment scores α into a context vector. Visualizing the attention weights is soft alignment — the direct ancestor of 2017 self-attention (Luong proposed the multiplicative/dot-product version the same year).',
     latex: [
       'e_{ti}=a(s_{t-1},h_i),\\quad \\alpha_{ti}=\\text{softmax}_i(e_{ti})',
       'c_t=\\textstyle\\sum_i \\alpha_{ti} h_i'
     ],
-    shapes: ['分数 [L_t, L_s] → 权重 α（行和=1）','上下文 c_t [d]'],
-    code: "const e = tf.tanh(sPrev.matMul(Wa).add(H.matMul(Ua)));\nconst alpha = tf.softmax(e.matMul(v), -1);   // 对齐权重\nconst ctx = alpha.matMul(H);                 // 加权上下文",
-    params: '对齐网络 ~3·d²',
+    shapes: ['scores [L_t, L_s] → weights α (rows sum to 1)','context c_t [d]'],
+    code: "const e = tf.tanh(sPrev.matMul(Wa).add(H.matMul(Ua)));\nconst alpha = tf.softmax(e.matMul(v), -1);   // alignment weights\nconst ctx = alpha.matMul(H);                 // weighted context",
+    params: 'alignment network ~3·d²',
     refs: ['Bahdanau et al. 2015 · Neural Machine Translation by Jointly Learning to Align and Translate',
            'Luong et al. 2015 · Effective Approaches to Attention-based Neural Machine Translation']
   },
   'selfattn': {
     title: 'Self-Attention (2017, endpoint of the prehistory line)',
-    desc: '关键一跃：注意力不再只是「解码器看编码器」，而是让序列自己看自己——Q、K、V 同源。任意两位置一步直连（路径 O(1)），全部位置一次矩阵乘法并行完成，循环被彻底抛弃。',
+    desc: 'The key leap: attention is no longer just decoder-looks-at-encoder but sequence-looks-at-itself — Q, K, V share provenance. Any two positions connect in one hop (path O(1)); all positions process in one parallel matrix multiply; recurrence is abandoned entirely.',
     latex: [
       '\\text{Attention}(X,X,X)=\\text{softmax}\\!\\left(\\frac{XX^{\\top}}{\\sqrt{d}}\\right)X'
     ],
-    shapes: ['[batch, L, d] → [batch, L, d]（一次并行）'],
+    shapes: ['[batch, L, d] → [batch, L, d] (one parallel pass)'],
     code: "const scores = X.matMul(X, false, true).div(Math.sqrt(d));\nreturn tf.softmax(scores, -1).matMul(X);",
-    params: '0（不含投影）',
+    params: '0 (excluding projections)',
     refs: ['Vaswani et al. 2017 · Attention Is All You Need']
   },
 
   /* ============ Decoder-Only · Dense 现代组件 ============ */
   'rope': {
     title: 'RoPE Rotary Position Embedding (RoFormer, 2021)',
-    desc: '把位置编码为二维平面旋转：q、k 各自旋转 m·θ、n·θ 后做内积，结果只依赖相对位置 m−n。绝对位置的实现、相对位置的表达，且可外推；配合 YaRN/NTK 插值可扩展到百万级上下文。LLaMA/Qwen/Kimi 全系采用（ALiBi 2022 为线性偏置变体）。',
+    desc: 'Encodes position as 2D-plane rotations: q and k rotate by m·θ and n·θ respectively, so their inner product depends only on relative position m−n. Absolute-position implementation with relative-position expression, and extrapolable; with YaRN/NTK interpolation it extends to million-token contexts. Used across LLaMA/Qwen/Kimi (ALiBi 2022 is a linear-bias variant).',
     latex: [
       '\\begin{pmatrix}q_m^{(2i)}\\\\ q_m^{(2i+1)}\\end{pmatrix}=\\begin{pmatrix}\\cos m\\theta_i & -\\sin m\\theta_i\\\\ \\sin m\\theta_i & \\cos m\\theta_i\\end{pmatrix}\\begin{pmatrix}q^{(2i)}\\\\ q^{(2i+1)}\\end{pmatrix}',
-      '\\langle R_m q,\\,R_n k\\rangle=\\langle q,\\,R_{n-m}k\\rangle\\ \\text{（只依赖 }m-n\\text{）}'
+      '\\langle R_m q,\\,R_n k\\rangle=\\langle q,\\,R_{n-m}k\\rangle\\ \\text{(depends only on }m-n\\text{)}'
     ],
-    shapes: ['[batch, seq, d_model] 成对维度旋转','形状不变、0 参数'],
+    shapes: ['[batch, seq, d_model] paired-dimension rotation','shape preserved, 0 parameters'],
     code: "const theta = Math.pow(10000, -2*i/dModel);\nconst [x, y] = [q[2*i], q[2*i+1]];\nq[2*i]   = x*Math.cos(m*theta) - y*Math.sin(m*theta);\nq[2*i+1] = x*Math.sin(m*theta) + y*Math.cos(m*theta);",
-    params: '0（固定旋转，无可训练参数）',
+    params: '0 (fixed rotation, no trainable parameters)',
     refs: ['Su et al. 2021 · RoFormer: Enhanced Transformer with Rotary Position Embedding',
            'Press et al. 2022 · ALiBi (Train Short, Test Long)',
-           'Peng et al. 2024 · YaRN (上下文扩展)',
-           'Moonshot AI 2026 · Kimi K3（首个全栈 NoPE 前沿模型：位置由因果掩码+KDA 状态隐式携带）']
+           'Peng et al. 2024 · YaRN (context extension)',
+           'Moonshot AI 2026 · Kimi K3 (first full-stack NoPE frontier model: positions carried implicitly by causal mask + KDA state)']
   },
   'rmsnorm': {
     title: 'RMSNorm（2019）+ Pre-Norm',
-    desc: 'LayerNorm 的减法：去掉均值中心化，只按均方根缩放，计算更少且效果相当；配合 Pre-Norm（先归一化再进子层）让百层网络稳定训练。GPT-2 起用 Pre-LN，LLaMA 起用 Pre-RMSNorm——2017 的 Post-LN 已成为历史。',
+    desc: 'LayerNorm minus the mean-centering: scale by root-mean-square only — less computation, comparable quality; combined with Pre-Norm (normalize before the sublayer) even hundred-layer networks train stably. GPT-2 adopted Pre-LN; LLaMA adopted Pre-RMSNorm — Post-LN from 2017 is history.',
     latex: [
       '\\text{RMSNorm}(x)=\\frac{x}{\\sqrt{\\frac{1}{d}\\textstyle\\sum_i x_i^2+\\varepsilon}}\\odot g',
-      '\\text{对比 LayerNorm：无需减去均值 }\\mu(x)'
+      '\\text{vs LayerNorm: no mean subtraction }\\mu(x)'
     ],
-    shapes: ['[batch, seq, d_model] → 同形'],
+    shapes: ['[batch, seq, d_model] → same shape'],
     code: "const ms = tf.mean(tf.square(x), -1, true);\nreturn x.div(ms.add(1e-6).sqrt()).mul(gamma);",
-    params: 'd（仅缩放向量 g）',
+    params: 'd (scale vector g only)',
     refs: ['Zhang & Sennrich 2019 · Root Mean Square Layer Normalization',
            'Xiong et al. 2020 · On Layer Normalization in the Transformer Architecture (Pre-LN)']
   },
   'swiglu': {
     title: 'SwiGLU gated feed-forward (2020→LLaMA)',
-    desc: '现代 LLM 的 FFN：SiLU 门控分支与线性分支逐元素相乘后再投影，同等参数量下稳定优于 ReLU FFN。因多一个矩阵，d_ff 常取约 ⅔·4d 保持总参数与原设计对齐。激活函数演进线：ReLU(2017) → GELU(GPT/BERT) → SiLU/SwiGLU(LLaMA 起)。',
+    desc: 'The modern LLM FFN: SiLU-gated branch element-wise multiplied with a linear branch before projection; consistently beats ReLU FFN at equal parameter count. The extra matrix means d_ff is usually ~⅔·4d to keep total parameters aligned. Activation evolution: ReLU (2017) → GELU (GPT/BERT) → SiLU/SwiGLU (LLaMA onward).',
     latex: [
       '\\text{SwiGLU}(x)=\\big(\\text{SiLU}(xW_{g})\\odot xW_{u}\\big)W_{d},\\quad \\text{SiLU}(x)=x\\cdot\\sigma(x)'
     ],
@@ -222,111 +222,111 @@ const MODULE_DETAILS = {
     code: "const gate = tf.silu(x.matMul(Wg));\nconst up   = x.matMul(Wu);\nreturn gate.mul(up).matMul(Wd);",
     params: '3·d·d_ff',
     refs: ['Shazeer 2020 · GLU Variants Improve Transformer',
-           'Touvron et al. 2023 · LLaMA（首次大规模采用）']
+           'Touvron et al. 2023 · LLaMA (first large-scale adoption)']
   },
   'gqa': {
     title: 'GQA Grouped-Query Attention (2023)',
-    desc: 'Q 头分组共享 KV 头（如 32 个 Q 头共享 8 组 KV）：KV Cache 与解码带宽直接 ÷4，质量接近 MHA；还可从训练好的 MHA 检查点「Uptraining」低成本转换。MQA（2019）是 h_KV=1 的极端特例。Qwen2/3、LLaMA-2/3 的标配。',
+    desc: 'Groups of Q heads share KV heads (e.g., 32 Q heads share 8 KV groups): KV cache and decoding bandwidth drop 4x directly, quality close to MHA; can also be converted cheaply from a trained MHA checkpoint via uptraining. MQA (2019) is the extreme h_KV=1 case. Standard on Qwen2/3, LLaMA-2/3.',
     latex: [
       '\\text{head}_i=\\text{Attention}\\big(QW_i^Q,\\,KW_{g(i)}^K,\\,VW_{g(i)}^V\\big),\\quad g(i)=\\big\\lfloor i/(h_Q/h_{KV})\\big\\rfloor'
     ],
-    shapes: ['Q [B, 32, L, dh]','K/V [B, 8, L, dh] → tile 广播','KV Cache ÷ 4'],
-    code: "const K8  = K.reshape([B,L,8,dh]).transpose([0,2,1,3]);\nconst K32 = tf.tile(K8, [1, 4, 1, 1]);   // 8 组 KV → 32 头\nconst out = sdpa(Q, K32, V32, causalMask(L));",
-    params: 'KV 投影省 (1 − h_KV/h_Q)·2·d·d',
+    shapes: ['Q [B, 32, L, dh]','K/V [B, 8, L, dh] → tile broadcast','KV Cache ÷ 4'],
+    code: "const K8  = K.reshape([B,L,8,dh]).transpose([0,2,1,3]);\nconst K32 = tf.tile(K8, [1, 4, 1, 1]);   // 8 KV groups → 32 heads\nconst out = sdpa(Q, K32, V32, causalMask(L));",
+    params: 'KV projection saves (1 − h_KV/h_Q)·2·d·d',
     refs: ['Ainslie et al. 2023 · GQA: Training Generalized Multi-Query Transformer Models',
-           'Kwon et al. 2023 · vLLM/PagedAttention（Cache 显存管理）']
+           'Kwon et al. 2023 · vLLM/PagedAttention (cache memory management)']
   },
   'lm-head': {
     title: 'LM Head output layer',
-    desc: 'Final RMSNorm 后的隐状态经 Linear 投影到词表并 softmax，取 argmax/采样作为下一个 token。现代 LLM 常与输入 Embedding 共享权重（权重绑定），省下 V×d 参数；解码侧配合 KV Cache 逐 token 生成。',
+    desc: 'The post-Final-RMSNorm hidden state is linearly projected to vocab size and softmaxed; argmax/sampling picks the next token. Modern LLMs often share weights with the input embedding (weight tying), saving V×d parameters; decoding generates token-by-token with a KV cache.',
     latex: [
-      'P(u\\,|\\,x)=\\text{softmax}(h_L W_{out}^{\\top}),\\quad W_{out}=E^{\\top}\\ \\text{（可选绑定）}'
+      'P(u\\,|\\,x)=\\text{softmax}(h_L W_{out}^{\\top}),\\quad W_{out}=E^{\\top}\\ \\text{(optional tying)}'
     ],
-    shapes: ['[B,L,d] → [B,L,|V|] → 下一个 token'],
-    code: "const logits = h.matMul(E.transpose());  // 权重绑定\nconst next = tf.multinomial(tf.softmax(logits.slice([0,-1])), 1);",
-    params: 'd×V（绑定后 0 新增）',
+    shapes: ['[B,L,d] → [B,L,|V|] → next token'],
+    code: "const logits = h.matMul(E.transpose());  // weight tying\nconst next = tf.multinomial(tf.softmax(logits.slice([0,-1])), 1);",
+    params: 'd×V (0 extra when tied)',
     refs: ['Press & Wolf 2017 · Using the Output Embedding to Improve Language Models']
   },
 
   /* ============ Attention 演进 ============ */
   'mha-ev': {
     title: 'MHA Multi-Head Attention (2017 baseline)',
-    desc: '每个 Q 头独立配一组 K/V 头：表达力最强，但推理时 KV Cache 随头数线性增长（2·L·h·dₕ/层），长上下文与大批量并发的瓶颈起点——后续所有变体都在回答「KV 能不能更小」。',
-    latex: ['\\text{Cache}=2\\,L\\,h\\,d_h\\ \\text{floats / 层 / 序列}'],
-    shapes: ['Q/K/V [B, h, L, dh]（h 组独立 KV）'],
-    code: "// h 组 KV 全部进 Cache\nconst K = splitHeads(x.matMul(WK));  // [B,h,L,dh]",
+    desc: 'Each Q head gets its own K/V heads: maximum expressiveness, but at inference the KV cache grows linearly with head count (2·L·h·dₕ per layer) — the bottleneck starting point for long context and large-batch serving. Every later variant answers can KV be smaller?',
+    latex: ['\\text{Cache}=2\\,L\\,h\\,d_h\\ \\text{floats / layer / sequence}'],
+    shapes: ['Q/K/V [B, h, L, dh] (h independent KV groups)'],
+    code: "// all h KV groups enter the cache\nconst K = splitHeads(x.matMul(WK));  // [B,h,L,dh]",
     params: '4·(d²+d)',
     refs: ['Vaswani et al. 2017 · Attention Is All You Need']
   },
   'mqa': {
     title: 'MQA Multi-Query Attention (2019)',
-    desc: '所有 Q 头共享同一组 K/V：KV Cache 骤降 h 倍、解码吞吐大幅提升；但表达力损失明显。作为 GQA 的极端特例（h_KV=1）被记入谱系。',
+    desc: 'All Q heads share one K/V group: KV cache drops h-fold and decode throughput rises sharply, but expressiveness suffers notably. Recorded in the lineage as GQA\'s extreme case (h_KV=1).',
     latex: ['h_{KV}=1:\\; \\text{Cache} \\div h'],
-    shapes: ['Q [B,h,L,dh]','K/V [B,1,L,dh]（全头共享）'],
+    shapes: ['Q [B,h,L,dh]','K/V [B,1,L,dh] (shared across all heads)'],
     code: "const K1 = K.reshape([B,L,1,dh]);\nconst Kt = tf.tile(K1, [1, h, 1, 1]);",
-    params: 'KV 投影仅 2·d·dh',
+    params: 'KV projection only 2·d·dh',
     refs: ['Shazeer 2019 · Fast Transformer Decoding: One Write-Head is All You Need']
   },
   'mla': {
     title: 'MLA Multi-head Latent Attention (DeepSeek-V2/V3, Kimi K2)',
-    desc: '把 KV 低秩压缩进潜在向量 c（d_c ≪ d·h），推理时 Cache 只存 c，按需用吸收矩阵升维还原 K/V：显存缩小数十倍且质量不掉；配合 MoE 支撑 671B/1T 级模型的高效推理。',
+    desc: 'Low-rank compresses KV into a latent vector c (d_c ≪ d·h); at inference the cache stores only c, restoring K/V on demand via absorption matrices: tens-of-times memory savings with no quality loss; paired with MoE it powers efficient inference for 671B/1T-class models.',
     latex: [
       'c_{KV}=W_{DKV}x\\in\\mathbb{R}^{d_c},\\quad K=W_{UK}c_{KV},\\; V=W_{UV}c_{KV}',
-      '\\text{Cache}: 2Lhd_h \\rightarrow L d_c\\ (\\div \\text{数十倍})'
+      '\\text{Cache}: 2Lhd_h \\rightarrow L d_c\\ (\\div \\text{tens of times})'
     ],
-    shapes: ['x [B,L,d] → c_KV [B,L,d_c≈512]','按需还原 K/V [B,h,L,dh]'],
-    code: "const c = x.matMul(W_DKV);              // 唯一进 Cache 的\nconst K = c.matMul(W_UK), V = c.matMul(W_UV); // 解码侧升维",
-    params: '压缩/升维 ~2·d·d_c + 2·d_c·d',
+    shapes: ['x [B,L,d] → c_KV [B,L,d_c≈512]','K/V restored on demand [B,h,L,dh]'],
+    code: "const c = x.matMul(W_DKV);              // the only thing entering the cache\nconst K = c.matMul(W_UK), V = c.matMul(W_UV); // decode-side up-projection",
+    params: 'compression/up-projection ~2·d·d_c + 2·d_c·d',
     refs: ['DeepSeek-AI 2024 · DeepSeek-V2 Technical Report (MLA)',
            'DeepSeek-AI 2024 · DeepSeek-V3 Technical Report',
-           'Moonshot AI 2025 · Kimi K2（沿用 MLA）']
+           'Moonshot AI 2025 · Kimi K2 (keeps MLA)']
   },
   'flash': {
     title: 'FlashAttention (2022, IO-aware exact attention)',
-    desc: '不改数学、只改访存：Q/K/V 分块装入 SRAM，块内在线 softmax（维护运行最大值 m 与和 ℓ），L×L 矩阵从不写回 HBM。长上下文训练提速 2-4×、显存 O(L²)→O(L)，是现代框架默认内核（v2/2023 换并行轴、v3/2024 上 FP8）。',
+    desc: 'Changes memory access, not math: Q/K/V tiles live in SRAM with online softmax per tile (maintaining running max m and sum ℓ); the L×L matrix never hits HBM. Long-context training speeds up 2-4x, memory O(L²)→O(L); the default kernel of modern frameworks (v2/2023 re-tiled the parallel axis, v3/2024 added FP8).',
     latex: [
       'm\\leftarrow\\max(m,\\,m_{\\text{tile}}),\\quad \\ell\\leftarrow e^{m_{old}-m}\\,\\ell+\\textstyle\\sum_{\\text{tile}}e^{s-m}'
     ],
-    shapes: ['HBM 读写：O(L²) → O(Ld)','结果与标准 softmax 完全一致'],
-    code: "for (const [Kj, Vj] of tiles(K, V)) {   // K/V 分块流入\n  const S  = Qtile.matMul(Kj.T).div(Math.sqrt(dk));\n  mNew = rowmax(m, S); l = exp(m−mNew)*l + rowsum(exp(S−mNew));\n  acc  = exp(m−mNew)*acc + exp(S−mNew).matMul(Vj); m = mNew;\n}\nconst O = acc.div(l);",
-    params: '0（内核级优化，非新参数）',
+    shapes: ['HBM traffic: O(L²) → O(Ld)','results identical to standard softmax'],
+    code: "for (const [Kj, Vj] of tiles(K, V)) {   // K/V tiles stream in\n  const S  = Qtile.matMul(Kj.T).div(Math.sqrt(dk));\n  mNew = rowmax(m, S); l = exp(m−mNew)*l + rowsum(exp(S−mNew));\n  acc  = exp(m−mNew)*acc + exp(S−mNew).matMul(Vj); m = mNew;\n}\nconst O = acc.div(l);",
+    params: '0 (kernel-level optimization, no new parameters)',
     refs: ['Dao et al. 2022 · FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness',
            'Dao 2023 · FlashAttention-2', 'Shah et al. 2024 · FlashAttention-3'],
-    extra: '<svg width="330" height="168" role="img" aria-label="FlashAttention 分块在线 softmax 示意" style="background:var(--c-code-bg);border-radius:8px;padding:6px;">' +
-      '<text x="14" y="18" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q×Kᵀ 分块（因果）</text>' +
+    extra: '<svg width="330" height="168" role="img" aria-label="FlashAttention tiled online softmax illustration" style="background:var(--c-code-bg);border-radius:8px;padding:6px;">' +
+      '<text x="14" y="18" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q×Kᵀ tiles (causal)</text>' +
       (() => { let s=''; for(let i=0;i<4;i++)for(let j=0;j<4;j++){ const on=j<=i;
         s+='<rect x="'+(14+j*26)+'" y="'+(26+i*22)+'" width="22" height="18" rx="3" fill="'+
         (on?'rgba(126,166,255,.75)':'rgba(160,175,200,.18)')+'"/>'; }
         s+='<rect x="12" y="24" width="106" height="90" rx="6" fill="none" stroke="var(--c-accent)" stroke-width="1.6" stroke-dasharray="4 3"/>';
         return s; })() +
-      '<text x="140" y="40" font-size="12" fill="var(--c-text)" font-family="var(--font-mono)">SRAM 常驻：</text>' +
-      '<text x="140" y="58" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q 分块 + m, ℓ, O 累计器</text>' +
+      '<text x="140" y="40" font-size="12" fill="var(--c-text)" font-family="var(--font-mono)">SRAM-resident:</text>' +
+      '<text x="140" y="58" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">Q tile + m, ℓ, O accumulators</text>' +
       '<text x="140" y="84" font-size="12" fill="var(--c-text)" font-family="var(--font-mono)">HBM：</text>' +
-      '<text x="140" y="102" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">从不物化 L×L 矩阵</text>' +
+      '<text x="140" y="102" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">the L×L matrix is never materialized</text>' +
       '<path d="M 14 132 L 118 132" stroke="var(--c-accent)" stroke-width="1.6" marker-end="url(#arrow)"/>' +
-      '<text x="14" y="152" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">K/V 分块依次流入 → 在线 softmax 修正</text>' +
+      '<text x="14" y="152" font-size="11.5" fill="var(--c-text-dim)" font-family="var(--font-mono)">K/V tiles stream in → online softmax correction</text>' +
       '</svg>'
   },
   'sparse': {
     title: 'Trainable sparse attention (NSA / MoBA, 2025)',
-    desc: '注意力矩阵大部分是低值噪声：只对重要块算精确注意力，其余跳过或压缩。DeepSeek NSA 把稀疏模式做进预训练（硬件对齐的块稀疏核）；Kimi MoBA 以「块级 Top-K 门控」混合全/稀疏注意力，长上下文成本近线性。',
+    desc: 'Most of the attention matrix is low-value noise: compute exact attention only on important blocks, skipping or compressing the rest. DeepSeek NSA bakes sparse patterns into pre-training (hardware-aligned block-sparse kernels); Kimi MoBA mixes full/sparse attention via block-level top-K gating, near-linear long-context cost.',
     latex: [
       'O=\\text{Attn}(Q,\\,\\text{TopK-blocks}(K,V)),\\quad g=\\text{softmax}(\\text{gate})'
     ],
-    shapes: ['L×L → 每行只保留 ~k 个块','复杂度 ~O(L·k·w)'],
-    code: "// MoBA：块级门控选 Top-K 块\nconst blockScores = qBlock.matMul(kBlocks.T);\nconst topK = tf.topk(blockScores, k);  // 其余块不计算",
-    params: '0~少量门控参数',
+    shapes: ['L×L → keep only ~k blocks per row','complexity ~O(L·k·w)'],
+    code: "// MoBA: block-level gating picks top-K blocks\nconst blockScores = qBlock.matMul(kBlocks.T);\nconst topK = tf.topk(blockScores, k);  // other blocks not computed",
+    params: '0 to a few gating parameters',
     refs: ['DeepSeek-AI 2025 · Native Sparse Attention (NSA)',
            'Moonshot AI 2025 · MoBA: Mixture of Block Attention for Long-Context LLMs',
-           'DeepSeek-AI 2025 · V3.2-Exp（DSA 稀疏注意力，NSA 工程化）']
+           'DeepSeek-AI 2025 · V3.2-Exp (DSA sparse attention, NSA engineering)']
   },
   'hybrid': {
     title: 'Hybrid architecture (few full-attention + many linear layers)',
-    desc: '全注意力负责精确检索、线性层负责廉价序列建模，按比例（常 1:3 ~ 1:7）混搭：Jamba（AI21，Mamba+Attention）、Griffin/Hawk（DeepMind，门控线性递归）、Samba（Microsoft）、Kimi Linear（KDA+MLA）——长上下文效率与质量的新平衡点。',
-    latex: ['\\text{层序列}=[\\underbrace{\\text{Linear}}_{3/4},\\dots,\\underbrace{\\text{Full}}_{1/4}]\\times N'],
-    shapes: ['同 Decoder Block，逐层替换注意力类型'],
+    desc: 'Full attention handles precise retrieval; linear layers handle cheap sequence modeling, mixed proportionally (often 1:3 to 1:7): Jamba (AI21, Mamba+Attention), Griffin/Hawk (DeepMind, gated linear recurrence), Samba (Microsoft), Kimi Linear (KDA+MLA) — a new balance of long-context efficiency and quality.',
+    latex: ['\\text{layer stack}=[\\underbrace{\\text{Linear}}_{3/4},\\dots,\\underbrace{\\text{Full}}_{1/4}]\\times N'],
+    shapes: ['same Decoder block, swapping attention type per layer'],
     code: "for (l of layers) x = l.isFull ? fullAttn(x) : linearAttn(x);",
-    params: '介于 Dense 与 Linear 之间',
+    params: 'between Dense and Linear',
     refs: ['Lieber et al. 2024 · Jamba: A Hybrid Transformer-Mamba Language Model',
            'De et al. 2024 · Griffin: Mixing Gated Linear Recurrences with Local Attention',
            'Moonshot AI 2025 · Kimi Linear']
@@ -335,102 +335,102 @@ const MODULE_DETAILS = {
   /* ============ 线性 / SSM / RNN 复兴 ============ */
   'linear': {
     title: 'Linear attention (Katharopoulos, 2020)',
-    desc: '用核函数 φ 改写 softmax 注意力并利用结合律：先算 φ(K)ᵀV（一个 d×d 矩阵），复杂度 O(L·d²) 摆脱 L²；同一公式可改写为状态递推 Sₜ=Sₜ₋₁+φ(kₜ)vₜᵀ——「Transformer 就是 RNN」。后续 RWKV/xLSTM/KDA 都在这条线上做门控与衰减改进。',
+    desc: 'Rewrites softmax attention with a feature map φ using associativity: compute φ(K)ᵀV first (a d×d matrix), dropping complexity from L² to O(L·d²); the same formula rewrites as state recursion Sₜ=Sₜ₋₁+φ(kₜ)vₜᵀ — Transformers are RNNs. RWKV/xLSTM/KDA later added gating and decay improvements along this line.',
     latex: [
       '\\text{Attn}(Q,K,V)=\\frac{\\phi(Q)\\big(\\phi(K)^{\\top}V\\big)}{\\phi(Q)\\phi(K)^{\\top}\\mathbf{1}}',
       'S_t=S_{t-1}+\\phi(k_t)v_t^{\\top},\\quad u_t=\\frac{S_t\\phi(q_t)}{\\phi(q_t)^{\\top}z_t}'
     ],
-    shapes: ['φ(K)ᵀV：[d,d] 常量状态','每步 O(d²)，与 L 无关'],
-    code: "const KV = phi(K).transpose().matMul(V);  // [d,d] 先算这个\nconst out = phi(Q).matMul(KV);\n// 流式推理：S = S.add(phi(k_t).outer(v_t));",
-    params: '0（φ 固定特征映射）',
+    shapes: ['φ(K)ᵀV: [d,d] constant state','O(d²) per step, independent of L'],
+    code: "const KV = phi(K).transpose().matMul(V);  // [d,d] computed first\nconst out = phi(Q).matMul(KV);\n// streaming inference: S = S.add(phi(k_t).outer(v_t));",
+    params: '0 (φ is a fixed feature map)',
     refs: ['Katharopoulos et al. 2020 · Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention']
   },
   'rwkv': {
     title: 'RWKV（2022）',
-    desc: '把注意力改写为带通道级时间衰减的线性 RNN：训练时可并行（类 Transformer），推理时 O(1) 状态（类 RNN）。开源社区长青的线性模型线。',
+    desc: 'Rewrites attention as a linear RNN with channel-wise time decay: parallelizable training (Transformer-like), O(1) inference state (RNN-like). An evergreen linear-model line in the open-source community.',
     latex: [
       'wkv_t=\\frac{\\sum_i e^{-(t-1-i)w+k_i}v_i+e^{u+k_t}v_t}{\\sum_i e^{-(t-1-i)w+k_i}+e^{u+k_t}}'
     ],
-    shapes: ['每通道标量衰减 w','状态 [d] 级别'],
-    code: "// 通道级衰减递推（数值稳定版省略）\na = a.mul(wDecay).add(v_t); b = b.mul(wDecay).add(1);",
-    params: '~同 Transformer Block',
+    shapes: ['scalar decay w per channel','[d]-scale state'],
+    code: "// channel-wise decay recursion (numerically stable version omitted)\na = a.mul(wDecay).add(v_t); b = b.mul(wDecay).add(1);",
+    params: '~ a Transformer block',
     refs: ['Peng et al. 2023 · RWKV: Reinventing RNNs for the Transformer Era']
   },
   'xlstm': {
     title: 'xLSTM (2024, LSTM revival)',
-    desc: 'LSTM 原作者团队 27 年后的回应：sLSTM 用指数门控+新记忆混合，mLSTM 用矩阵记忆 + 协方差更新（可并行）。与 Mamba/RWKV 同属「RNN 复兴」浪潮。',
-    latex: ['c_t=f_t\\odot c_{t-1}+i_t\\,v_t,\\quad C_t=C_{t-1}\\odot f_t+n_t v_t^{\\top}\\ \\text{(mLSTM 矩阵记忆)}'],
-    shapes: ['记忆由向量 [d] 扩展为矩阵 [d,d]'],
-    code: "C = C.mul(f).add(n.outer(v));  // 矩阵细胞状态\nh = C.matMul(q).div(norm);",
+    desc: 'The LSTM originators\' answer 27 years later: sLSTM uses exponential gating + new memory mixing; mLSTM uses matrix memory + covariance update (parallelizable). Part of the RNN-revival wave alongside Mamba/RWKV.',
+    latex: ['c_t=f_t\\odot c_{t-1}+i_t\\,v_t,\\quad C_t=C_{t-1}\\odot f_t+n_t v_t^{\\top}\\ \\text{(mLSTM matrix memory)}'],
+    shapes: ['memory expanded from vector [d] to matrix [d,d]'],
+    code: "C = C.mul(f).add(n.outer(v));  // matrix cell state\nh = C.matMul(q).div(norm);",
     params: '~1.5× LSTM',
     refs: ['Beck et al. 2024 · xLSTM: Extended Long Short-Term Memory']
   },
   's4': {
     title: 'S4 Structured State Space (2021)',
-    desc: '连续状态空间系统经 HiPPO 初始化 + 结构化对角化，可化为长卷积并行训练、递推推理：LRA 长序列基准横扫，是 Mamba 的直接前身。',
+    desc: 'Continuous state-space systems, with HiPPO initialization + structured diagonalization, become long convolutions for parallel training and recurrence for inference: swept the LRA long-sequence benchmarks — Mamba\'s direct predecessor.',
     latex: [
-      "h'(t)=\\bar{A}h(t)+\\bar{B}x(t),\\quad y=\\bar{C}h(t)\\ \\text{（离散化 SSM）}"
+      "h'(t)=\\bar{A}h(t)+\\bar{B}x(t),\\quad y=\\bar{C}h(t)\\ \\text{(discretized SSM)}"
     ],
-    shapes: ['核 K = CĀᵏB̄：长度 L 的卷积核'],
-    code: "const K = ssmConvKernel(A, B, C, L);  // 长卷积形式\nconst y = conv1d(x, K);               // 训练并行\n// 推理：h = A.mul(h).add(B.mul(x));",
-    params: 'A/B/C 结构化参数 ~O(d·N)',
+    shapes: ['kernel K = CĀᵏB̄: a length-L convolution kernel'],
+    code: "const K = ssmConvKernel(A, B, C, L);  // long-convolution form\nconst y = conv1d(x, K);               // parallel training\n// inference: h = A.mul(h).add(B.mul(x));",
+    params: 'structured A/B/C parameters ~O(d·N)',
     refs: ['Gu et al. 2021 · Efficiently Modeling Long Sequences with Structured State Spaces (S4)']
   },
   'mamba': {
     title: 'Mamba selective SSM (2023)',
-    desc: '让 SSM 的 Δ/B/C 依赖输入（选择机制）：模型可以按内容遗忘或记住信息，弥补 SSM「一视同仁」的缺陷；配合硬件感知并行扫描，训练快 5×、推理 O(1) 状态。Mamba-2（2024）证明其与线性注意力的 SSD 统一框架。',
+    desc: 'Makes SSM Δ/B/C input-dependent (the selection mechanism): the model can forget or retain by content, fixing SSM\'s one-size-fits-all flaw. With hardware-aware parallel scans, training is 5x faster and inference keeps O(1) state. Mamba-2 (2024) proved its SSD unification with linear attention.',
     latex: [
-      'h_t=\\bar{A}(x_t)h_{t-1}+\\bar{B}(x_t)x_t,\\quad y_t=\\bar{C}(x_t)h_t\\ \\text{（参数随输入变化）}'
+      'h_t=\\bar{A}(x_t)h_{t-1}+\\bar{B}(x_t)x_t,\\quad y_t=\\bar{C}(x_t)h_t\\ \\text{(parameters vary with input)}'
     ],
-    shapes: ['状态 [B,d,N]','扫描 O(L·d·N)'],
-    code: "for (const x_t of xs) {            // 硬件感知扫描（并行前缀和）\n  h = Abar(x_t).mul(h).add(Bbar(x_t).mul(x_t));\n  y_t = Cbar(x_t).dot(h);\n}",
-    params: 'Δ/B/C 投影 ~3·d·d',
+    shapes: ['state [B,d,N]','scan O(L·d·N)'],
+    code: "for (const x_t of xs) {            // hardware-aware scan (parallel prefix sum)\n  h = Abar(x_t).mul(h).add(Bbar(x_t).mul(x_t));\n  y_t = Cbar(x_t).dot(h);\n}",
+    params: 'Δ/B/C projections ~3·d·d',
     refs: ['Gu & Dao 2023 · Mamba: Linear-Time Sequence Modeling with Selective State Spaces',
            'Dao & Gu 2024 · Transformers are SSMs (Mamba-2/SSD)']
   },
   'kda': {
     title: 'Kimi Linear · KDA（2025）',
-    desc: 'Moonshot 的混合线性架构：KDA（Kimi Delta Attention，带门控增量记忆的线性注意力，可精细遗忘）占 3/4 层，MLA 全注意力占 1/4 层。3B/48B-A3B 规模上全面对标同尺寸全注意力模型：百万级上下文、显存省 ~75%、解码吞吐 ~6×。',
+    desc: 'Moonshot\'s hybrid linear architecture: KDA (Kimi Delta Attention — linear attention with gated incremental memory enabling fine-grained forgetting) makes up 3/4 of layers, MLA full attention 1/4. At 3B/48B-A3B scale it matches same-size full-attention models across the board: million-token context, ~75% memory savings, ~6x decode throughput.',
     latex: [
-      'S_t=\\alpha_t\\odot S_{t-1}+\\beta_t\\,\\phi(k_t)v_t^{\\top}\\ \\text{（门控增量规则）}'
+      'S_t=\\alpha_t\\odot S_{t-1}+\\beta_t\\,\\phi(k_t)v_t^{\\top}\\ \\text{(gated delta rule)}'
     ],
-    shapes: ['状态 [d,d] 矩阵记忆','层配比 Linear : Full = 3 : 1'],
-    code: "for (l of layers)\n  x = (l % 4 === 0) ? mlaBlock(x) : kdaBlock(x);  // 1/4 全注意力",
-    params: '~同 Dense Block（线性层更省 KV）',
+    shapes: ['[d,d] matrix memory state','layer ratio Linear : Full = 3 : 1'],
+    code: "for (l of layers)\n  x = (l % 4 === 0) ? mlaBlock(x) : kdaBlock(x);  // 1/4 full attention",
+    params: '~ Dense Block (linear layers save more KV)',
     refs: ['Moonshot AI 2025 · Kimi Linear: An Expressive, Efficient Attention Architecture']
   },
 
   /* ============ MoE ============ */
   'moe-router': {
     title: 'MoE gating router (Router / Gate)',
-    desc: '每个 token 由路由器打分，仅 Top-K（常 K=8）专家被激活：总参数与单 token 计算解耦。谱系：GShard(2020) → Switch(2021, Top-1) → Mixtral(2023, Top-2) → DeepSeek-V3(256 选 8 + 无辅助损失均衡 + 共享专家) → Qwen3(128 选 8) → Kimi K2(384 选 8)。',
+    desc: 'A router scores every token and activates only Top-K experts (often K=8): total parameters decouple from per-token compute. Lineage: GShard(2020) → Switch(2021, Top-1) → Mixtral(2023, Top-2) → DeepSeek-V3(256 choose 8 + aux-loss-free balancing + shared expert) → Qwen3(128 choose 8) → Kimi K2(384 choose 8).',
     latex: [
       'g=\\text{softmax}\\big(\\text{TopK}(xW_g,\\,K)\\big),\\quad y=\\sum_{i\\in\\text{TopK}} g_i\\,E_i(x)',
-      '\\text{DeepSeek-V3：偏置动态调节替代辅助损失（}\\mathcal{L}_{aux}\\text{-free 均衡）}'
+      '\\text{DeepSeek-V3: bias-based dynamic balancing replaces the auxiliary loss (}\\mathcal{L}_{aux}\\text{-free balancing)}'
     ],
-    shapes: ['x [B,L,d] → logits [B,L,E]','Top-K 掩码 → 仅 K/E 专家计算'],
-    code: "const logits = x.matMul(Wg);                 // [B,L,E]\nconst {values, indices} = tf.topk(logits, K);\nconst gate = tf.softmax(values, -1);          // 稀疏门控\nlet y = tf.zerosLike(x);\nfor (let k = 0; k < K; k++)\n  y = y.add(experts[indices[k]](x).mul(gate.slice(k)));",
-    params: 'd×E + E（路由矩阵）',
+    shapes: ['x [B,L,d] → logits [B,L,E]','Top-K mask → only K/E experts computed'],
+    code: "const logits = x.matMul(Wg);                 // [B,L,E]\nconst {values, indices} = tf.topk(logits, K);\nconst gate = tf.softmax(values, -1);          // sparse gating\nlet y = tf.zerosLike(x);\nfor (let k = 0; k < K; k++)\n  y = y.add(experts[indices[k]](x).mul(gate.slice(k)));",
+    params: 'd×E + E (routing matrix)',
     refs: ['Shazeer et al. 2017 · Outrageously Large Neural Networks (Sparsely-Gated MoE)',
            'Lepikhin et al. 2020 · GShard', 'Fedus et al. 2021 · Switch Transformers',
            'DeepSeek-AI 2024 · Auxiliary-Loss-Free Load Balancing']
   },
   'moe-expert': {
     title: 'MoE expert (Expert = SwiGLU FFN)',
-    desc: '每个专家就是一个 SwiGLU FFN。细粒度专家（更多更小的专家）+ 共享专家（常驻处理通用知识，DeepSeek/Qwen3 采用）是当前主流配置；K2 进一步用 MLA 注意力 + 384 专家做到 1T 总参 / 32B 激活。',
-    latex: ['E_i(x)=\\text{SwiGLU}_i(x),\\quad \\text{激活参数} \\approx K/E'],
-    shapes: ['[B,L,d] → [B,L,d_ff] → [B,L,d]（仅被路由 token）'],
+    desc: 'Each expert is just a SwiGLU FFN. Fine-grained experts (more, smaller ones) + shared experts (always-on general knowledge; adopted by DeepSeek/Qwen3) are today\'s mainstream; K2 goes further with MLA attention + 384 experts for 1T total / 32B active params.',
+    latex: ['E_i(x)=\\text{SwiGLU}_i(x),\\quad \\text{active params} \\approx K/E'],
+    shapes: ['[B,L,d] → [B,L,d_ff] → [B,L,d] (routed tokens only)'],
     code: "class Expert {  // = SwiGLU FFN\n  forward(x){ return tf.silu(x.matMul(Wg)).mul(x.matMul(Wu)).matMul(Wd); }\n}",
-    params: '每专家 3·d·d_ff（总参数 ×E，激活 ×K/E）',
+    params: 'per expert 3·d·d_ff (total params ×E, active ×K/E)',
     refs: ['Jiang et al. 2024 · Mixtral of Experts',
            'Moonshot AI 2025 · Kimi K2: Open Agentic Intelligence']
   },
   'moe-sum': {
     title: 'Sparse weighted synthesis',
-    desc: '只有被选中的 K 个专家输出参与合成，其余专家本次完全不计算——这就是「万亿总参、百亿激活」的稀疏本质。推理时专家可分布到不同显卡（专家并行 EP）。',
+    desc: 'Only the K selected experts\' outputs join the synthesis; unselected experts compute nothing this step — the essence of trillion-total/billion-active sparsity. At inference, experts can be distributed across GPUs (expert parallelism).',
     latex: ['y=\\sum_{i\\in\\text{TopK}} g_i E_i(x)'],
-    shapes: ['[B,L,d]（与 Dense FFN 输出同形，直接残差）'],
-    code: "y = g1*E1(x) + g2*E2(x);  // 其余 E-2 个专家跳过",
+    shapes: ['[B,L,d] (same shape as Dense FFN output; direct residual)'],
+    code: "y = g1*E1(x) + g2*E2(x);  // remaining E-2 experts skipped",
     params: '0',
     refs: ['Fedus et al. 2022 · A Review of Sparse Expert Models in Deep Learning']
   },
@@ -438,13 +438,13 @@ const MODULE_DETAILS = {
   /* ============ Attention 路线 C：长上下文与稳定化 ============ */
   'swa': {
     title: 'Sliding-window attention (SWA) and local/global interleaving',
-    desc: '每个位置只看最近 w 个 token：L×L → L×w，推理 Cache 恒为窗口大小。Mistral 首创；Gemma 2/3 用「局部层:全局层 ≈ 5:1」交错——局部层管邻近细节、稀疏的全局层管长程检索。首 token 吸引力现象由 attention sinks（StreamingLLM）解释并利用。',
+    desc: 'Each position sees only the last w tokens: L×L → L×w and inference cache fixed at window size. Pioneered by Mistral; Gemma 2/3 interleave local:global ≈ 5:1 — local layers handle nearby detail while sparse global layers handle long-range retrieval. The first-token attention sink phenomenon is explained and exploited by attention sinks (StreamingLLM).',
     latex: [
       'A_{ij}=\\text{softmax}\\!\\left(\\frac{q_i k_j^{\\top}}{\\sqrt{d}}\\right),\\quad j\\in(i-w,\\,i]',
-      '\\text{Cache}: O(L)\\rightarrow O(w),\\quad \\text{层配比 局部:全局}=5{:}1\\ \\text{(Gemma 3)}'
+      '\\text{Cache}: O(L)\\rightarrow O(w),\\quad \\text{layer ratio local:global}=5{:}1\\ \\text{(Gemma 3)}'
     ],
-    shapes: ['注意力矩阵 [L,L] → 带状 [L,w]','KV Cache 恒定 w'],
-    code: "const start = Math.max(0, t - W);\nconst s = q[t].matMul(K.slice([start, t-start+W]), false, true);\n// 仅窗口内 softmax，窗口外不计算",
+    shapes: ['attention matrix [L,L] → banded [L,w]','KV cache fixed at w'],
+    code: "const start = Math.max(0, t - W);\nconst s = q[t].matMul(K.slice([start, t-start+W]), false, true);\n// softmax within window only; outside is not computed",
     params: '0',
     refs: ['Jiang et al. 2023 · Mistral 7B', 'Riviere et al. 2024 · Gemma 2',
            'Google 2025 · Gemma 3 Technical Report',
@@ -452,163 +452,163 @@ const MODULE_DETAILS = {
   },
   'ctx-ext': {
     title: 'Context extension: PI → NTK-aware → YaRN',
-    desc: 'RoPE 模型把 4K 训练长度扩到百万级推理的三代方案：PI 线性插值（位置 ÷s）简单有效但高频信息受损；NTK-aware 高频外推、低频内插；YaRN 按波长分频插值 + 注意力温度补偿，10 倍扩展仅需 ~1000 步微调。CodeLlama-100K、Qwen-1M 的底层技术。',
+    desc: 'Three generations of stretching RoPE models from 4K training to million-token inference: PI linear interpolation (positions ÷s), simple but damages high frequencies; NTK-aware extrapolates high frequencies and interpolates low ones; YaRN adds wavelength-wise frequency-band interpolation + attention temperature compensation — a 10x extension needs only ~1000 fine-tuning steps. The technology under CodeLlama-100K and Qwen-1M.',
     latex: [
-      '\\text{PI}: \\theta_m\\rightarrow\\theta_m/s;\\quad \\text{YaRN}: \\text{按波长 } r(\\theta) \\text{ 分频插值} + \\sqrt{1/t}\\ \\text{温度}'
+      '\\text{PI}: \\theta_m\\rightarrow\\theta_m/s;\\quad \\text{YaRN}: \\text{wavelength-wise } r(\\theta) \\text{ frequency-band interpolation} + \\sqrt{1/t}\\ \\text{temperature}'
     ],
-    shapes: ['有效上下文 ×10~250（4K→1M）','微调成本 ~1000 步'],
-    code: "// YaRN：对第 i 个频率按波长混合插值\nconst r = 2*Math.PI/theta[i];          // 波长\nconst scale = r < base ? 1 : Math.max(0, (r-base)/(L_train-base)) * (1-1/s) + 1/s;",
+    shapes: ['effective context ×10~250 (4K→1M)','fine-tuning cost ~1000 steps'],
+    code: "// YaRN: wavelength-based blended interpolation for frequency i\nconst r = 2*Math.PI/theta[i];          // wavelength\nconst scale = r < base ? 1 : Math.max(0, (r-base)/(L_train-base)) * (1-1/s) + 1/s;",
     params: '0',
     refs: ['Chen et al. 2023 · Extending Context Window via Position Interpolation',
            'bloc97 2023 · NTK-Aware Scaled RoPE', 'Peng et al. 2024 · YaRN']
   },
   'qknorm': {
     title: 'Training stabilization trio: QK-Norm · soft-capping · z-loss',
-    desc: '规模越大越容易训崩的主流对策：QK-Norm 对 Q/K 按头做 RMSNorm，防注意力 logits 爆炸（Gemma 3、Chameleon）；logit soft-capping 用 tanh 限幅防输出过自信（Gemma 2）；z-loss 惩罚 softmax 分母漂移（ST-MoE/PaLM）。与 Pre-Norm/RMSNorm 同属「稳定化演进线」。',
+    desc: 'Mainstream countermeasures as scale makes training brittle: QK-Norm RMS-normalizes Q/K per head to prevent attention-logit explosions (Gemma 3, Chameleon); logit soft-capping bounds outputs with tanh to prevent overconfidence (Gemma 2); z-loss penalizes softmax-denominator drift (ST-MoE/PaLM). Same stabilization-evolution line as Pre-Norm/RMSNorm.',
     latex: [
       '\\hat{q}=\\text{RMSNorm}(q)\\cdot\\sqrt{d_h};\\quad \\hat{\\ell}=c\\cdot\\tanh(\\ell/c)\\ \\text{(soft-cap)}',
       '\\mathcal{L}_z=\\frac{1}{B}\\sum_b\\big(\\log Z_b\\big)^2\\ \\text{(z-loss)}'
     ],
-    shapes: ['注意力 logits 方差受控','训练 loss 曲线平滑'],
-    code: "const qn = rmsNorm(Q).mul(Math.sqrt(dh));\nconst kn = rmsNorm(K).mul(Math.sqrt(dh));\nconst logits = softCap(qn.matMul(kn.T), 30); // c=30 tanh 限幅",
-    params: 'QK-Norm：4·dₕ/头',
+    shapes: ['attention logit variance kept under control','training loss curve smooths out'],
+    code: "const qn = rmsNorm(Q).mul(Math.sqrt(dh));\nconst kn = rmsNorm(K).mul(Math.sqrt(dh));\nconst logits = softCap(qn.matMul(kn.T), 30); // tanh soft-cap with c=30",
+    params: 'QK-Norm: 4·dₕ per head',
     refs: ['Riviere et al. 2024 · Gemma 2', 'Google 2025 · Gemma 3',
            'Chameleon Team 2024 · Chameleon Mixed-Modal Early-Fusion',
            'Zoph et al. 2022 · ST-MoE (z-loss)']
   },
   'diff': {
     title: 'Differential attention (DIFF Transformer, 2024)',
-    desc: '仿差分放大器：两组独立 softmax 注意力相减，共模噪声（无关 token 的均匀注意力）被抵消——抗幻觉、长上下文鲁棒、还能省一半头数（每组 h/2 头）。65B 规模验证优于同尺寸 Transformer。',
+    desc: 'Modeled on a differential amplifier: two independent softmax attentions subtract, canceling common-mode noise (uniform attention to irrelevant tokens) — hallucination-resistant, long-context robust, and saves half the heads (h/2 per group). Validated at 65B scale, beating same-size Transformers.',
     latex: [
       '\\text{DiffAttn}(Q)=\\big(\\text{softmax}(Q_1K_1^{\\top})V_1-\\lambda\\,\\text{softmax}(Q_2K_2^{\\top})V_2\\big),\\ \\lambda\\in(0,1)'
     ],
-    shapes: ['每组 h/2 头 ×2 组','输出同 MHA 形状'],
+    shapes: ['h/2 heads per group × 2 groups','output same shape as MHA'],
     code: "const A1 = softmax(Q1.matMul(K1.T)); const A2 = softmax(Q2.matMul(K2.T));\nreturn A1.sub(A2.mul(lambda)).matMul(V);",
-    params: '~同 MHA（两组半宽投影）',
+    params: '~ MHA (two half-width projection sets)',
     refs: ['Ye et al. 2024 · Differential Transformer']
   },
 
   /* ============ 生成范式 ============ */
   'autoreg': {
     title: 'Autoregressive next-token prediction (NTP)',
-    desc: 'LLM 的第一性原理：因果掩码 + 交叉熵，逐 token 左到右。GPT 系（GPT/Qwen/LLaMA/Kimi/DeepSeek）全部采用；KV Cache 让每步生成 O(L)。理解「为什么自回归赢」= 理解简单目标 + 规模的涌现。',
+    desc: 'The first principle of LLMs: causal masking + cross-entropy, left-to-right token by token. The entire GPT family (GPT/Qwen/LLaMA/Kimi/DeepSeek) uses it; KV cache makes each generation step O(L). Understanding why autoregression wins = understanding a simple objective plus emergence at scale.',
     latex: [
       'P(y)=\\prod_t P(y_t\\mid y_{<t}),\\quad \\mathcal{L}=-\\sum_t\\log P(y_t\\mid y_{<t})'
     ],
-    shapes: ['logits [B,L,|V|]','每步生成 O(L)（有 Cache）'],
+    shapes: ['logits [B,L,|V|]','O(L) per generation step (with cache)'],
     code: "const logits = model(yPrev);\nconst loss = tf.losses.softmaxCrossEntropy(oneHot(yNext), logits);",
-    params: '0（目标函数，非参数）',
+    params: '0 (objective function, not a parameter)',
     refs: ['Radford et al. 2018/2019 · GPT-1/2', 'Brown et al. 2020 · GPT-3']
   },
   'mtp': {
     title: 'Multi-token prediction MTP (DeepSeek-V3)',
-    desc: '在下一词之外再挂 D 个轻量头，一次预测未来 1..D 个 token：训练信号更密集、迫使模型「规划」未来；V3 实测多基准 +1.5~3%。推理时这些头可直接充当Speculative decoding的草稿（EAGLE 思路），一鱼两吃。',
+    desc: 'Beyond next-token prediction, attach D lightweight heads predicting future tokens 1..D at once: denser training signal forces the model to plan; V3 measured +1.5~3% across benchmarks. At inference these heads double as speculative-decoding drafts (the EAGLE idea) — two birds with one stone.',
     latex: [
       'p_t^{(k)}=\\text{head}_k(h_t),\\quad \\mathcal{L}=\\sum_{k=1}^{D}\\mathbb{E}\\big[-\\log p_{t+k}^{(k)}\\big]'
     ],
-    shapes: ['共享主干 + D 个投影头','每头 [B,L,|V|]'],
+    shapes: ['shared trunk + D projection heads','per head [B,L,|V|]'],
     code: "for (let k = 1; k <= D; k++)\n  loss += ce(heads[k](h.slice([0, 0], [-1, L-k])), y.slice([0, k]));",
-    params: 'D·d·|V|（辅助头）',
+    params: 'D·d·|V| (auxiliary heads)',
     refs: ['DeepSeek-AI 2024 · DeepSeek-V3 Technical Report (MTP)',
            'Gloeckle et al. 2024 · Better & Faster Large Language Models via Multi-token Prediction',
            'Li et al. 2024 · EAGLE-2']
   },
   'diffusion': {
     title: 'Diffusion language models (LLaDA · Mercury · Gemini Diffusion)',
-    desc: '生成 = 从全 [MASK] 出发迭代去噪：每轮并行预测所有位置的一个子集，打破左到右依赖，天然可并行、可回改、可控编辑。LLaDA 8B 首次验证扩散 LM 的规模法则（可比肩 LLaMA3-8B）；Mercury/Gemini Diffusion 主打 5-10× 生成速度。当前短板：变长序列、KV Cache 失效、顶级质量仍属自回归。',
+    desc: 'Generation = iterative denoising from full [MASK]: each round predicts a subset of positions in parallel, breaking left-to-right dependence — naturally parallel, revisable and controllably editable. LLaDA 8B first validated diffusion LM scaling laws (comparable to LLaMA3-8B); Mercury/Gemini Diffusion emphasize 5-10x generation speed. Current weaknesses: variable-length sequences, KV cache inapplicability, and top-tier quality still belongs to autoregression.',
     latex: [
-      'x_T=\\text{[MASK]}^L\\ \\xrightarrow{\\ p_\\theta(y_t\\mid x_t)\\ }\\ x_0=y\\quad\\text{(逐位置并行去噪)}'
+      'x_T=\\text{[MASK]}^L\\ \\xrightarrow{\\ p_\\theta(y_t\\mid x_t)\\ }\\ x_0=y\\quad\\text{(per-position parallel denoising)}'
     ],
-    shapes: ['每步并行预测全部位置','生成速度 5-10× AR'],
-    code: "let x = maskAll(L);\nfor (let step = T; step > 0; step--)\n  x = denoise(x, model, step);   // 每步揭示一部分 token",
-    params: '~同规模 AR 模型',
+    shapes: ['all positions predicted in parallel each step','generation speed 5-10x AR'],
+    code: "let x = maskAll(L);\nfor (let step = T; step > 0; step--)\n  x = denoise(x, model, step);   // reveal part of the tokens each step",
+    params: '~ same-size AR model',
     refs: ['Nie et al. 2025 · LLaDA: Large Language Diffusion Models',
            'Inception Labs 2025 · Mercury Diffusion LLM',
            'Google DeepMind 2025 · Gemini Diffusion']
   },
   'spec': {
     title: 'Speculative decoding (Speculative Decoding · EAGLE)',
-    desc: '推理加速而非新模型：小草稿模型一次猜 k 个 token，大模型一次前向并行验证，拒绝采样保证输出分布与逐 token 生成完全一致——数学无损的 2-4× 提速。EAGLE 系用目标模型特征层 + MTP 式头做草稿，是当前工业默认。注意边界：Speculative decoding不改结构/参数/训练目标，属「推理系统层」——与 KV Cache 管理（PagedAttention）、continuous batching、量化同层；架构决定一次前向算什么，它决定调用几次前向。',
+    desc: 'Inference acceleration rather than a new model: a small draft model guesses k tokens at once and the big model verifies them in one parallel forward pass; rejection sampling guarantees the output distribution exactly matches token-by-token generation — a math-lossless 2-4x speedup. EAGLE-style drafts use the target model\'s feature layer + MTP-like heads, now the industrial default. Note the boundary: speculative decoding changes no structure/parameters/objective — it belongs to the inference-system layer alongside KV-cache management (PagedAttention), continuous batching and quantization. Architecture decides what one forward pass computes; this decides how many forward passes to call.',
     latex: [
-      '\\text{接受率 }\\alpha=\\mathbb{E}\\big[\\min(1,p/q)\\big],\\quad \\text{期望加速}\\approx\\frac{1-\\alpha^{k+1}}{(1-\\alpha)}\\ \\text{倍}'
+      '\\text{acceptance rate }\\alpha=\\mathbb{E}\\big[\\min(1,p/q)\\big],\\quad \\text{expected speedup}\\approx\\frac{1-\\alpha^{k+1}}{(1-\\alpha)}\\ \\text{x}'
     ],
-    shapes: ['草稿 k token → 1 次并行验证','每步产出 ≥1 token','模型本身零改动'],
-    code: "const draft = smallModel.kTokens(prefix, k);   // 猜 k 个\nconst p = targetModel.probs(prefix.concat(draft));\nconst out = rejectSample(draft, p);            // 无损验证",
-    params: '草稿模型 ~1/10 参数（系统级额外开销）',
+    shapes: ['draft k tokens → one parallel verification','≥1 token produced per step','zero changes to the model itself'],
+    code: "const draft = smallModel.kTokens(prefix, k);   // guess k tokens\nconst p = targetModel.probs(prefix.concat(draft));\nconst out = rejectSample(draft, p);            // lossless verification",
+    params: 'draft model ~1/10 parameters (system-level overhead)',
     refs: ['Leviathan et al. 2023 · Fast Inference from Transformers via Speculative Decoding',
            'Chen et al. 2023 · Accelerating LLM Decoding with Speculative Sampling',
            'Li et al. 2024 · EAGLE-2',
-           'Kwon et al. 2023 · vLLM/PagedAttention（同属推理系统层）',
-           'Yu et al. 2022 · Orca（continuous batching，同属推理系统层）']
+           'Kwon et al. 2023 · vLLM/PagedAttention (also inference-system layer)',
+           'Yu et al. 2022 · Orca (continuous batching, also inference-system layer)']
   },
 
   /* ============ 前沿探索 ============ */
   'blt': {
     title: 'Byte Latent Transformer（BLT, Meta 2024）',
-    desc: '去掉 BPE 分词器：字节流按「下一个字节的熵」动态聚成 patch——越可预测处 patch 越大，计算量随信息熵分配。等训练算力下鲁棒性优于 Llama 3（抗噪、无 OOV、跨语言公平），代价是长 patch 依赖局部字节小模型。与 MTP/SWA 同属「改输入分配」的效率线。',
+    desc: 'Drops the BPE tokenizer: byte streams dynamically cluster into patches by the entropy of the next byte — the more predictable, the larger the patch; compute is allocated by information entropy. At equal training compute it beats Llama 3 on robustness (noise-resistant, no OOV, fair across languages); the cost is that long patches rely on a small local byte model. Same compute-allocation efficiency line as MTP/SWA.',
     latex: [
-      '\\text{patch 边界} \\approx \\text{熵率突增处},\\quad \\text{计算} \\propto \\text{信息熵}'
+      '\\text{patch boundaries} \approx \\text{entropy-rate jumps},\\quad \\text{compute} \propto \\text{entropy}'
     ],
-    shapes: ['字节 [B] → 动态 patch [P] → 全局隐状态','P 随内容变化'],
-    code: "const patches = entropyPatcher(bytes, smallModel); // 动态边界\nconst h = globalModel(patches);\nconst bytesOut = localDecoder(h, bytes);",
-    params: 'patcher(小) + 全局模型 + 局部解码器',
+    shapes: ['bytes [B] → dynamic patches [P] → global hidden states','P varies with content'],
+    code: "const patches = entropyPatcher(bytes, smallModel); // dynamic boundaries\nconst h = globalModel(patches);\nconst bytesOut = localDecoder(h, bytes);",
+    params: 'patcher (small) + global model + local decoder',
     refs: ['Pagnoni et al. 2024 · Byte Latent Transformer: Patches Scale Better Than Tokens']
   },
   'memlayer': {
     title: 'Memory Layers at Scale (Meta 2024)',
-    desc: '用可训练的稀疏键值记忆（百万级 embedding，product-key 检索 top-k）替换部分 FFN：事实性问答大幅提升而算力开销很小——「知识存记忆、推理靠注意力」的分工假说的工程验证。128M 记忆在 1.3B 模型上 trivia 性能 +100%+。',
+    desc: 'Replace part of the FFN with trainable sparse key-value memory (million-scale embeddings, product-key top-k retrieval): large factuality gains at tiny compute cost — an engineering validation of the division-of-labor hypothesis store knowledge in memory, reason via attention. 128M memory gave +100%+ trivia gains on a 1.3B model.',
     latex: [
-      'y=\\textstyle\\sum_{i\\in\\text{topk}(qK)} v_i\\quad\\text{(product-key 量化检索)}'
+      'y=\\textstyle\\sum_{i\\in\\text{topk}(qK)} v_i\\quad\\text{(product-key quantized retrieval)}'
     ],
-    shapes: ['查询 [d] → top-k 记忆槽','稀疏激活 ~k/百万'],
-    code: "const keys1 = q.matMul(PK1); keys2 = q.matMul(PK2);\nconst topk = topkProduct(keys1, keys2, k);   // 分解检索\nconst y = V.gather(topk).mean(0);",
-    params: '记忆表 1M~1B×d（稀疏访问）',
+    shapes: ['query [d] → top-k memory slots','sparse activation ~k per million'],
+    code: "const keys1 = q.matMul(PK1); keys2 = q.matMul(PK2);\nconst topk = topkProduct(keys1, keys2, k);   // factorized retrieval\nconst y = V.gather(topk).mean(0);",
+    params: 'memory table 1M~1B×d (sparse access)',
     refs: ['Berges et al. 2024 · Memory Layers at Scale (Meta)']
   },
   'ttt': {
     title: 'TTT layer: test-time training (2024)',
-    desc: '把 RNN 的「隐藏状态」替换为一个可在线学习的神经网络：每个 token 到来时对隐模型做一步梯度下降，输出 = 更新后模型的前向。Sequence modeling is test-time training——状态容量从固定向量升级为整个网络。',
+    desc: 'Replaces the RNN hidden state with an online-learnable neural network: each arriving token takes one gradient step on the inner model; the output is the updated model\'s forward pass. Sequence modeling becomes test-time training — state capacity upgrades from a fixed vector to an entire network.',
     latex: [
       'W_t=W_{t-1}-\\eta\\,\\nabla\\,\\ell\\big(W_{t-1};x_t\\big),\\quad y_t=f\\big(W_t;x_t\\big)'
     ],
-    shapes: ['状态 = 权重 W [参数量级]','每 token 一步 SGD'],
-    code: "for (const x_t of xs) {\n  const g = grad(w => reconLoss(w, x_t));   // 自监督\n  W = W.sub(g.mul(eta));                    // 状态更新\n  y_t = f(W, x_t);\n}",
-    params: '隐模型 ~MLP 级',
+    shapes: ['state = weights W [parameter-scale]','one SGD step per token'],
+    code: "for (const x_t of xs) {\n  const g = grad(w => reconLoss(w, x_t));   // self-supervised\n  W = W.sub(g.mul(eta));                    // state update\n  y_t = f(W, x_t);\n}",
+    params: 'inner model ~MLP-scale',
     refs: ['Sun et al. 2024 · Learning to (Learn at Test Time): RNNs with Expressive Hidden States']
   },
   'titans': {
     title: 'Titans: test-time neural memory (Google 2025)',
-    desc: '「惊讶度」驱动记忆：与当前记忆预测不符的信息才写入长期神经记忆模块（MLP 级、可扩展到千万级上下文），配合短期注意力与持久记忆三部分。是 TTT/Memorizing Transformer 一线的工程化代表：记忆在测试时继续学习。',
+    desc: 'Surprise-driven memory: only information that contradicts current memory predictions gets written into the long-term neural memory module (MLP-scale, extensible to tens-of-millions context), alongside short-term attention and persistent memory. The engineering exemplar of the TTT/Memorizing Transformer line: memory keeps learning at test time.',
     latex: [
-      'M_t=M_{t-1}-\\theta_t\\,\\nabla\\,\\ell\\big(M_{t-1};x_t\\big)\\quad\\text{(surprise = 梯度大小)}'
+      'M_t=M_{t-1}-\\theta_t\\,\\nabla\\,\\ell\\big(M_{t-1};x_t\\big)\\quad\\text{(surprise = gradient magnitude)}'
     ],
-    shapes: ['长期记忆 [d,d] 级','上下文 2M→10M+'],
+    shapes: ['long-term memory at [d,d] scale','2M→10M+ context'],
     code: "const surprise = grad(M => reconLoss(M, x_t));\nM = M.mul(forgetGate).sub(surprise.mul(theta));\ny = attn(x_short) + M.query(q_t);",
-    params: '记忆模块 ~MLP',
+    params: 'memory module ~MLP-scale',
     refs: ['Behrouz et al. 2025 · Titans: Learning to Memorize at Test Time',
            'Wu et al. 2022 · Memorizing Transformers']
   },
   'looped': {
     title: 'Deep looping / latent reasoning (Universal Transformer → 2025)',
-    desc: '同一组层反复迭代、深度按问题难度自适应：简单问题少循环、难题多「想」几轮——把测试时计算从输出 token 转移到潜空间递归。2018 年的 Universal Transformer 在 2025 以 latent reasoning 模型（如 Huginnet）回潮，与 o1 式长思维链互补。',
+    desc: 'The same layers iterate repeatedly with depth adapting to problem difficulty: easy problems loop less, hard ones think longer — moving test-time compute from output tokens to latent-space recursion. The 2018 Universal Transformer returned in 2025 as latent-reasoning models (e.g. Huginnet), complementing o1-style long chains of thought.',
     latex: [
-      'h^{(k+1)}=\\text{Block}\\big(h^{(k)}\\big),\\quad K\\ \\text{按难度自适应（AdaTape/ACT）}'
+      'h^{(k+1)}=\\text{Block}\\big(h^{(k)}\\big),\\quad K\\ \\text{adaptive by difficulty (AdaTape/ACT)}'
     ],
-    shapes: ['参数量不变','有效深度 K×N'],
-    code: "let h = embed(x);\nfor (let k = 0; k < adaptiveSteps(difficulty); k++)\n  h = block(h);   // 权重共享的递归深度",
-    params: 'N 层参数（共享复用 K 次）',
+    shapes: ['parameter count unchanged','effective depth K×N'],
+    code: "let h = embed(x);\nfor (let k = 0; k < adaptiveSteps(difficulty); k++)\n  h = block(h);   // recursive depth with shared weights",
+    params: 'N layers of parameters (shared, reused K times)',
     refs: ['Dehghani et al. 2018 · Universal Transformers',
            'Geiping et al. 2025 · Reasoning by Latent Space (Huginnet)']
   },
   'multimodal': {
     title: 'Three routes of multimodal fusion',
-    desc: '①适配器：ViT/Whisper 编码器输出经 projector 接入 LLM（LLaVA、Qwen-VL）——最主流；②早期融合：图文 token 混合统一训练（Chameleon）；③原生全模态：端到端流式输入输出（GPT-4o 系）。共同思想：把一切模态变成 token 序列，交给同一个 Transformer。',
+    desc: '1) Adapters: ViT/Whisper encoder outputs join the LLM via a projector (LLaVA, Qwen-VL) - the mainstream; 2) early fusion: image-text tokens mixed in unified training (Chameleon); 3) natively omni-modal: end-to-end streaming input/output (GPT-4o family). The shared idea: turn every modality into token sequences for the same Transformer.',
     latex: [
       'h=\\text{LLM}\\big(\\big[\\text{Proj}(v_1..v_m);\\;t_1..t_n\\big]\\big)'
     ],
-    shapes: ['图像 → ViT patch tokens → 投影到 d_model','与文本 token 拼接'],
+    shapes: ['image → ViT patch tokens → projected to d_model','concatenated with text tokens'],
     code: "const vis = proj(vitEncoder(image));       // [m, d]\nconst h = llm(tf.concat([vis, textTokens], 1));",
-    params: 'ViT + projector（~LLM 的 5-15%）',
+    params: 'ViT + projector (~5-15% of the LLM)',
     refs: ['Liu et al. 2023 · Visual Instruction Tuning (LLaVA)',
            'Chameleon Team 2024 · Mixed-Modal Early-Fusion Foundation Models',
            'Bai et al. 2023 · Qwen-VL']
@@ -617,25 +617,25 @@ const MODULE_DETAILS = {
   /* ============ 训练与对齐 ============ */
   'pretrain': {
     title: 'Pre-training',
-    desc: 'LLM 三阶段的第一阶段：在海量无标注文本上做自监督学习——Decoder 系用下一词预测（NTP），BERT 用掩码语言模型（MLM），T5 用 span corruption。语言、知识、基础推理能力全部来自这里；后续对齐阶段只塑造行为，基本不注入新能力（「对齐税」讨论即源于此）。',
+    desc: 'Stage one of the LLM three-stage pipeline: self-supervised learning over massive unlabeled text — decoder models use next-token prediction (NTP), BERT uses masked language modeling (MLM), T5 uses span corruption. Language, knowledge and basic reasoning all come from here; later alignment only shapes behavior and adds almost no new capability (hence the alignment-tax debate).',
     latex: [
       'L_{\\text{NTP}}=-\\sum_t \\log P(y_t\\mid y_{<t}),\\quad L_{\\text{MLM}}=-\\sum_{t\\in M}\\log P(x_t\\mid x_{\\setminus M})'
     ],
-    shapes: ['语料 ~10T token → 批次 [B, L]','算力 ~10^25 FLOPs 量级'],
-    code: "// 混合 NTP（Decoder）/MLM（Encoder）/span（T5）\nconst loss = tf.losses.softmaxCrossEntropy(oneHot(next), logits);",
-    params: '全部模型参数在此阶段学习',
-    refs: ['Radford et al. 2018/2019 · GPT 系列', 'Devlin et al. 2018 · BERT',
+    shapes: ['corpus ~10T tokens → batches [B, L]','compute on the order of ~10^25 FLOPs'],
+    code: "// mix NTP (Decoder) / MLM (Encoder) / span corruption (T5)\nconst loss = tf.losses.softmaxCrossEntropy(oneHot(next), logits);",
+    params: 'all model parameters are learned at this stage',
+    refs: ['Radford et al. 2018/2019 · GPT series', 'Devlin et al. 2018 · BERT',
            'Raffel et al. 2019 · T5']
   },
   'sft': {
     title: 'SFT supervised fine-tuning (Supervised Fine-Tuning)',
-    desc: '第二阶段：用人类撰写的「指令 → 回答」示范对做监督微调（损失函数与预训练相同，数据变了）。让基座从「会续写」变成「会听指令」。FLAN/T0 证明指令泛化可迁移到未见任务；LIMA 进一步证明对齐强基座只需 ~1000 条高质量示范——数据质量远重于数量。',
+    desc: 'Stage two: supervised fine-tuning on human-written instruction→response demonstration pairs (same loss as pre-training, new data). Turns the base model from continuer into instruction-follower. FLAN/T0 showed instruction generalization transfers to unseen tasks; LIMA showed a well-aligned base needs only ~1000 high-quality demonstrations — data quality far outweighs quantity.',
     latex: [
       'L_{\\text{SFT}}=-\\sum_t \\log p(y_t\\mid \\text{instruction},\\, y_{<t})'
     ],
-    shapes: ['示范对 (指令, 回答) ~1k~1M 条','与预训练同构，仅换数据'],
-    code: "// 与预训练同一损失，数据换成指令示范对\nfor (const {prompt, answer} of sftData) loss += ce(model(prompt), answer);",
-    params: '全参微调或 LoRA（低秩旁路）',
+    shapes: ['demonstration pairs (instruction, response) ~1k to 1M','same structure as pre-training, data swapped'],
+    code: "// same loss as pre-training; data swapped to instruction demonstrations\nfor (const {prompt, answer} of sftData) loss += ce(model(prompt), answer);",
+    params: 'full fine-tuning or LoRA (low-rank bypass)',
     refs: ['Wei et al. 2021 · Finetuned Language Models are Zero-Shot Learners (FLAN)',
            'Sanh et al. 2021 · Multitask Prompted Training (T0)',
            'Ouyang et al. 2022 · InstructGPT',
@@ -643,51 +643,51 @@ const MODULE_DETAILS = {
   },
   'rlhf': {
     title: 'RLHF: RL from human feedback',
-    desc: '第三阶段（对齐）：①人类对同一提示的多个回答排序 → 训练奖励模型 r(x,y)；②用 PPO 以奖励为信号更新策略，同时用 KL 惩罚锚住 SFT 分布，防止模型钻奖励模型空子（reward hacking）。ChatGPT 的直接来源：让模型从「会补全」变成「有帮助、诚实、无害」的对话者。',
+    desc: 'Stage three (alignment): 1) humans rank multiple responses to the same prompt → train reward model r(x,y); 2) PPO updates the policy using the reward while a KL penalty anchors to the SFT distribution, preventing reward hacking. ChatGPT\'s direct source: turning a model from completer into a helpful, honest, harmless conversation partner.',
     latex: [
       '\\max_\\theta\\; \\mathbb{E}_{x\\sim D,\\,y\\sim\\pi_\\theta}\\big[r(x,y)\\big] - \\beta\\,\\mathrm{KL}\\big(\\pi_\\theta\\|\\pi_{\\text{SFT}}\\big)'
     ],
-    shapes: ['偏好对 (x, y_w, y_l) → 奖励模型','PPO：策略/价值/奖励/参考 四模型'],
-    code: "for (const {x, y} of ppoSamples) {\n  const adv = reward(x, y) - beta * kl(policy(x,y), ref(x,y));\n  update(policy, adv);   // PPO 裁剪目标\n}",
-    params: '奖励模型 + 策略 + 参考（~3-4 倍推理参数）',
+    shapes: ['preference pairs (x, y_w, y_l) → reward model','PPO: policy/value/reward/reference — four models'],
+    code: "for (const {x, y} of ppoSamples) {\n  const adv = reward(x, y) - beta * kl(policy(x,y), ref(x,y));\n  update(policy, adv);   // PPO clipped objective\n}",
+    params: 'reward model + policy + reference (~3-4x inference parameters)',
     refs: ['Ziegler et al. 2019 · Fine-Tuning Language Models from Human Preferences',
            'Ouyang et al. 2022 · Training language models to follow instructions (InstructGPT)',
            'Bai et al. 2022 · Training a Helpful and Harmless Assistant (Anthropic)']
   },
   'dpo': {
     title: 'DPO Direct Preference Optimization (2023)',
-    desc: '把 RLHF 的「奖励模型 + PPO」两步折叠为一步：从偏好对出发的闭式变换证明，最优奖励可用策略与参考模型的对数比表示——于是对齐变成一个简单的分类式损失，无需采样、无需显式奖励模型，稳定性与实现难度大幅下降。变体：IPO、KTO、ORPO；工业界 RLHF/DPO 并存。',
+    desc: 'Folds RLHF\'s reward-model + PPO into one step: a closed-form transform from preference pairs proves the optimal reward can be written as a log-ratio between policy and reference model — alignment becomes a simple classification loss, no sampling, no explicit reward model, with much better stability and easier implementation. Variants: IPO, KTO, ORPO; industry runs RLHF/DPO side by side.',
     latex: [
       'L_{\\text{DPO}}=-\\log\\,\\sigma\\!\\Big(\\beta\\log\\frac{\\pi_\\theta(y_w|x)}{\\pi_{\\text{ref}}(y_w|x)}-\\beta\\log\\frac{\\pi_\\theta(y_l|x)}{\\pi_{\\text{ref}}(y_l|x)}\\Big)'
     ],
-    shapes: ['输入即偏好对 (x, y_w, y_l)','单模型 + 参考副本'],
+    shapes: ['input is a preference pair (x, y_w, y_l)','one model + a frozen reference copy'],
     code: "const logRatio = (y) => policy(x, y) - ref(x, y);   // log π/π_ref\nconst loss = -sigmoid(beta * (logRatio(yw) - logRatio(yl)));",
-    params: '策略 + 冻结参考（2 倍推理参数，无奖励模型）',
+    params: 'policy + frozen reference (2x inference parameters, no reward model)',
     refs: ['Rafailov et al. 2023 · Direct Preference Optimization',
            'Hong et al. 2024 · ORPO', 'Ethayarajh et al. 2024 · KTO']
   },
   'rlvr': {
     title: 'Verifiable-reward RL (R1-style reasoning training, 2024-25)',
-    desc: '对齐之后的新浪潮：数学、代码等有客观答案的领域，用「可验证奖励」（答案比对、单元测试通过）做强化学习，模型自发学会长思维链、反思与验证。DeepSeek-R1 证明纯 RL（GRPO：组内相对优势替代 critic）即可涌现推理行为；OpenAI o1 系列为闭源先声——「测试时计算」由此有了训练侧的根基。',
+    desc: 'The post-alignment new wave: in domains with objective answers (math, code), RL with verifiable rewards (answer checking, passing unit tests) makes models spontaneously develop long chains of thought, reflection and verification. DeepSeek-R1 proved pure RL (GRPO: group-relative advantages replace the critic) suffices for emergent reasoning; OpenAI\'s o1 series was the closed-source preview — test-time compute gained a training-side foundation.',
     latex: [
-      'R=\\mathbb{1}[\\text{answer correct}],\\quad \\text{GRPO: } A_i=\\frac{r_i-\\text{mean}(r)}{\\text{std}(r)}\\ (\\text{组内相对})'
+      'R=\\mathbb{1}[\\text{answer correct}],\\quad \\text{GRPO: } A_i=\\frac{r_i-\\text{mean}(r)}{\\text{std}(r)}\\ (\\text{group-relative})'
     ],
-    shapes: ['提示 → 长思维链 → 可验证答案',' rollout 长度可达数万 token'],
+    shapes: ['prompt → long chain of thought → verifiable answer','rollouts can reach tens of thousands of tokens'],
     code: "for (const x of batch) {\n  const rs = sampleN(policy, x, G).map(y => verify(x, y)); // 0/1\n  const adv = (rs - mean(rs)) / std(rs);                    // GRPO\n  update(policy, adv);\n}",
-    params: '策略 + 参考（无 critic）',
+    params: 'policy + reference (no critic)',
     refs: ['DeepSeek-AI 2025 · DeepSeek-R1: Incentivizing Reasoning via RL',
            'Shao et al. 2024 · DeepSeekMath (GRPO)',
            'OpenAI 2024 · Learning to Reason with LLMs (o1)']
   },
   'scaling': {
     title: 'Scaling Laws',
-    desc: 'LLM 时代的底层规律：验证损失随参数量 N、数据量 D、算力 C 的幂律平滑下降，可跨数量级外推。Kaplan 2020 给出首组公式；Chinchilla 2022 修正：给定算力，参数与数据应「等比扩展」（70B 配 1.4T token），直接改写了行业训练配方——也解释了 MoE（同等算力换更多参数）与高质量数据竞赛的兴起。',
+    desc: 'The fundamental law of the LLM era: validation loss falls as a smooth power law in parameters N, data D and compute C, extrapolable across orders of magnitude. Kaplan 2020 gave the first formulas; Chinchilla 2022 corrected that for fixed compute, parameters and data should scale proportionally (70B with 1.4T tokens) — rewriting industry training recipes and explaining both MoE (more params per FLOP) and the high-quality-data race.',
     latex: [
       'L(N)=L_\\infty+\\Big(\\frac{N_c}{N}\\Big)^{\\alpha},\\quad \\text{Chinchilla: } N_{\\text{opt}},D_{\\text{opt}}\\propto\\sqrt{C}'
     ],
-    shapes: ['损失-规模 双对数直线','可提前预测大模型性能'],
-    code: "// 用小模型系列拟合幂律，再外推目标规模\nconst {alpha, Nc} = fitPowerLaw(sizes, losses);\nconst lossBig = Linf + Math.pow(Nc / N_big, alpha);",
-    params: '拟合参数 α、N_c（非模型参数）',
+    shapes: ['loss-vs-scale log-log straight line','predict large-model performance in advance'],
+    code: "// fit power law on small-model series, extrapolate to target scale\nconst {alpha, Nc} = fitPowerLaw(sizes, losses);\nconst lossBig = Linf + Math.pow(Nc / N_big, alpha);",
+    params: 'fitted parameters α, N_c (not model parameters)',
     refs: ['Kaplan et al. 2020 · Scaling Laws for Neural Language Models',
            'Hoffmann et al. 2022 · Training Compute-Optimal Large Language Models (Chinchilla)']
   },
@@ -695,168 +695,168 @@ const MODULE_DETAILS = {
   /* ============ 前传·基石（1943-2016） ============ */
   'mp': {
     title: 'MP Neuron (1943)',
-    desc: 'McCulloch 与 Pitts 把神经元抽象为「weighted sum + threshold firing」的逻辑单元，并证明任意布尔函数都可由这样的单元组合实现——第一次把「思考」形式化为计算。所有神经网络的零号祖先。',
+    desc: 'McCulloch and Pitts abstracted the neuron into a logical unit of weighted sums + threshold firing and proved any Boolean function is realizable by composing such units — the first formalization of thought as computation. The ancestor of all neural networks.',
     latex: ['y=\\mathbb{1}\\Big[\\sum_i w_i x_i \\ge \\theta\\Big]'],
-    shapes: ['输入 x_i ∈ {0,1} → 二值输出'],
+    shapes: ['inputs x_i ∈ {0,1} → binary output'],
     code: "const y = (w.reduce((a, wv, i) => a + wv * x[i], 0) >= theta) ? 1 : 0;",
-    params: 'n 个权重 + 阈值 θ（手工设定，不可学习）',
+    params: 'n weights + threshold θ (hand-set, not learnable)',
     refs: ['McCulloch & Pitts 1943 · A Logical Calculus of the Ideas Immanent in Nervous Activity']
   },
   'hebb': {
     title: 'Hebbian learning rule (1949)',
-    desc: '「同时激发的神经元连接在一起」：共同激活的连接应当增强——第一个学习理论，纯局部、无导师。监督学习、无监督学习、对比学习（SimCLR）都是这一思想在不同时代的回声。',
+    desc: 'Neurons that fire together wire together: co-activated connections should strengthen — the first learning theory, purely local and teacher-free. Supervised, unsupervised and contrastive learning (SimCLR) are all echoes of this idea across eras.',
     latex: ['\\Delta w_i = \\eta\\, x_i\\, y'],
-    shapes: ['连接强度 w 按共激活增强'],
+    shapes: ['connection strength w grows with co-activation'],
     code: "w[i] += eta * x[i] * y;   // fire together, wire together",
-    params: '学习率 η',
+    params: 'learning rate η',
     refs: ['Hebb 1949 · The Organization of Behavior']
   },
   'perceptron': {
     title: 'Perceptron (1958)',
-    desc: 'Rosenblatt 给神经元装上「可学习的权重」：误差驱动的更新规则 + 收敛定理（线性可分数据必停），并造出专用硬件 Mark I。第一台真正「学习」的机器——局限在 11 年后由《Perceptrons》揭示。',
+    desc: 'Rosenblatt gave the neuron learnable weights: an error-driven update rule + convergence theorem (guaranteed to stop on linearly separable data), and built dedicated hardware Mark I. The first machine that truly learned — its limits were exposed 11 years later by Perceptrons.',
     latex: ['w \\leftarrow w + \\eta\\,(t-y)\\,x'],
-    shapes: ['线性决策边界','线性可分 ⇒ 必收敛'],
+    shapes: ['linear decision boundary','linearly separable ⇒ guaranteed convergence'],
     code: "for (const {x, t} of samples)\n  w = w.add(x.mul(eta * (t - predict(x))));",
-    params: 'n 个可学习权重 + 偏置',
+    params: 'n learnable weights + bias',
     refs: ['Rosenblatt 1958 · The Perceptron: A Probabilistic Model']
   },
   'winter': {
     title: '\'Perceptrons\' and the first AI winter (1969)',
-    desc: 'Minsky 与 Papert 数学证明单层Perceptron连 XOR 都无法表示（线性不可分），叠加算力与数据匮乏、书中对多层路径的悲观论断——神经网络经费枯竭，进入第一次 AI 寒冬。解药（多层 + 非线性 + Backpropagation）要到 1986 年才补上。',
-    latex: ['XOR \\notin \\text{线性可分} \\Rightarrow \\text{需隐藏层 + 非线性}'],
-    shapes: ['单层决策边界：一条直线','XOR 需要两条'],
-    code: "// XOR 需要隐藏层：\nh = sigmoid(x.matmul(W1));\ny = sigmoid(h.matmul(W2));",
+    desc: 'Minsky and Papert mathematically proved a single-layer Perceptron cannot even represent XOR (not linearly separable); combined with scarce compute/data and the book\'s pessimism about multi-layer routes, funding dried up — the first AI winter. The cure (depth + nonlinearity + backprop) only arrived in 1986.',
+    latex: ['XOR \\notin \\text{linearly separable} \\Rightarrow \\text{needs hidden layers + nonlinearity}'],
+    shapes: ['single-layer decision boundary: one straight line','XOR needs two lines'],
+    code: "// XOR needs a hidden layer:\nh = sigmoid(x.matmul(W1));\ny = sigmoid(h.matmul(W2));",
     params: '—',
     refs: ['Minsky & Papert 1969 · Perceptrons']
   },
   'neocognitron': {
     title: 'Neocognitron（1980）',
-    desc: 'Fukushima 模拟视皮层的层次化网络：交替的「特征提取层 + 池化层」逐级抽象边缘 → 形状 → 模式，且对位置平移鲁棒——卷积神经网络（LeNet/AlexNet）的直接思想祖先。',
-    latex: ['S 层（特征提取）→ C 层（池化）→ \\cdots 交替'],
-    shapes: ['逐层：边缘 → 部件 → 整体'],
-    code: "// 层次交替（现代写法）\nconst c1 = maxPool(conv2d(img, K1));\nconst c2 = maxPool(conv2d(c1, K2));",
-    params: '各层卷积核',
+    desc: 'Fukushima\'s hierarchical network modeled the visual cortex: alternating feature-extraction and pooling layers progressively abstract edges → shapes → patterns, robust to translation — the direct intellectual ancestor of CNNs (LeNet/AlexNet).',
+    latex: ['S layers (feature extraction) → C layers (pooling) → ⋯ alternating'],
+    shapes: ['layer by layer: edges → parts → wholes'],
+    code: "// hierarchical alternation (modern style)\nconst c1 = maxPool(conv2d(img, K1));\nconst c2 = maxPool(conv2d(c1, K2));",
+    params: 'per-layer convolution kernels',
     refs: ['Fukushima 1980 · Neocognitron: A Self-organizing Neural Network Model']
   },
   'backprop': {
     title: 'Backpropagation (1986)',
-    desc: 'Rumelhart、Hinton、Williams 把链式法则系统化用于多层网络：误差从输出层逐层回传、逐层更新权重——多层网络终于「训得动」，深度学习的第一块基石。今天所有 LLM 的训练核心仍是它（配自动微分）。',
+    desc: 'Rumelhart, Hinton and Williams systematized the chain rule for multi-layer networks: errors propagate backward layer by layer, updating weights along the way — multi-layer networks finally became trainable, the first cornerstone of deep learning. Still the training core of every LLM today (with autodiff).',
     latex: [
       '\\frac{\\partial L}{\\partial w^{(l)}}=\\frac{\\partial L}{\\partial a^{(L)}}\\prod_{k>l}\\frac{\\partial a^{(k)}}{\\partial a^{(k-1)}}\\cdot\\frac{\\partial a^{(l)}}{\\partial w^{(l)}}'
     ],
-    shapes: ['前向缓存激活 → 反向逐层回传'],
-    code: "// 前向存激活，反向链式乘\nlet delta = lossGrad;\nfor (let l = layers.length - 1; l >= 0; l--) {\n  grads[l] = delta.mul(activations[l].T);\n  delta = delta.matMul(layers[l].W.T).mul(actGrad[l]);\n}",
-    params: '—（训练算法）',
+    shapes: ['cache activations forward → backprop layer by layer'],
+    code: "// cache activations forward, chain-rule backward\nlet delta = lossGrad;\nfor (let l = layers.length - 1; l >= 0; l--) {\n  grads[l] = delta.mul(activations[l].T);\n  delta = delta.matMul(layers[l].W.T).mul(actGrad[l]);\n}",
+    params: '— (a training algorithm)',
     refs: ['Rumelhart, Hinton & Williams 1986 · Learning Representations by Back-propagating Errors']
   },
   'dbn': {
     title: 'DBN Deep Belief Network (2006)',
-    desc: 'Hinton 用逐层无监督预训练（受限玻尔兹曼机堆叠）+ 有监督微调，让「深层网络能训练」重新可行——深度学习复兴的起点。更深远的是「预训练 + 微调」范式本身：GPT/BERT 的训练哲学是它的直系后代。',
-    latex: ['P(v|h)\\;\\text{逐层建模} \\Rightarrow \\text{预训练} \\to \\text{微调}'],
-    shapes: ['逐层 RBM 堆叠','预训练 → 微调'],
-    code: "// 逐层贪心预训练，再整体微调\nfor (const layer of layers) pretrain(layer, data);\nfineTune(layers, labels);",
-    params: '各层 RBM 参数',
+    desc: 'Hinton made deep networks trainable again via layer-wise unsupervised pre-training (stacked RBMs) + supervised fine-tuning — the start of the deep-learning revival. More profound still is the pre-train+fine-tune paradigm itself: GPT/BERT\'s training philosophy is its direct descendant.',
+    latex: ['P(v|h)\\;\\text{layer-wise modeling} \\Rightarrow \\text{pre-train} \\to \\text{fine-tune}'],
+    shapes: ['stacked RBMs layer by layer','pre-training → fine-tuning'],
+    code: "// greedy layer-wise pre-training, then overall fine-tuning\nfor (const layer of layers) pretrain(layer, data);\nfineTune(layers, labels);",
+    params: 'per-layer RBM parameters',
     refs: ['Hinton & Salakhutdinov 2006 · A Fast Learning Algorithm for Deep Belief Nets']
   },
   'alexnet': {
     title: 'AlexNet（2012）',
-    desc: 'Krizhevsky、Sutskever、Hinton 用 GPU 训练 8 层 CNN（ReLU + Dropout + 数据增强）横扫 ImageNet（top-5 错误率 26%→15%）：「大数据 + GPU 算力 + 深度网络」三驾马车第一次同时到位。深度学习黄金时代引爆点，LLM 的算力路线由此铺开。',
-    latex: ['ReLU: \\max(0,x)\\ （比 sigmoid 抗梯度消失）'],
-    shapes: ['5 卷积 + 3 全连接','6000 万参数 · 2 块 GTX 580'],
-    code: "const y = tf.relu(conv2d(x, K1).maxPool()); // ReLU + 池化\nconst out = fc(y, Wfc);",
-    params: '6000 万',
+    desc: 'Krizhevsky, Sutskever and Hinton trained an 8-layer CNN on GPUs (ReLU + Dropout + augmentation) to sweep ImageNet (top-5 error 26%→15%): big data + GPU compute + deep networks aligned for the first time. The flashpoint of deep learning\'s golden age; the LLM compute roadmap started here.',
+    latex: ['ReLU: \\max(0,x)  (less vanishing-gradient-prone than sigmoid)'],
+    shapes: ['5 conv + 3 fc layers','60M parameters · 2× GTX 580'],
+    code: "const y = tf.relu(conv2d(x, K1).maxPool()); // ReLU + pooling\nconst out = fc(y, Wfc);",
+    params: '60 million',
     refs: ['Krizhevsky et al. 2012 · ImageNet Classification with Deep Convolutional Neural Networks']
   },
   'dqn': {
     title: 'DQN deep reinforcement learning（2013-15）',
-    desc: 'DeepMind 用 CNN + 经验回放 + 目标网络，让 AI 直接从屏幕像素学会打 Atari 游戏，达到人类水平——深度强化学习的开端。RL 谱系：DQN（游戏）→ AlphaGo → RLHF（对齐）→ R1（可验证奖励推理），强化学习一路走进 LLM 中心舞台。',
+    desc: 'DeepMind used CNN + experience replay + target networks to let an AI learn Atari games straight from screen pixels at human level — the beginning of deep RL. RL lineage: DQN (games) → AlphaGo → RLHF (alignment) → R1 (verifiable-reward reasoning); reinforcement learning worked its way to center stage in LLMs.',
     latex: [
       'Q(s,a)\\leftarrow Q(s,a)+\\alpha\\big[r+\\gamma\\max_{a\'}Q(s\',a\')-Q(s,a)\\big]'
     ],
-    shapes: ['像素 [84,84,4] → Q 值 [|A|]','经验回放池'],
-    code: "const target = r + gamma * maxQ(nextState);\nupdate(Q, s, a, target);   // 经验回放采样训练",
-    params: 'CNN ~千万',
+    shapes: ['pixels [84,84,4] → Q values [|A|]','experience replay buffer'],
+    code: "const target = r + gamma * maxQ(nextState);\nupdate(Q, s, a, target);   // trained via experience-replay sampling",
+    params: 'CNN ~10M params',
     refs: ['Mnih et al. 2013/2015 · Human-level Control through Deep Reinforcement Learning']
   },
   'adam': {
     title: 'Adam optimizer (2014)',
-    desc: '一阶动矩 + 二阶动矩的偏置校正估计，为每个参数自适应学习率：对超参鲁棒、收敛快、默认即好用。深度学习的事实标准——所有 LLM 至今仍在用其变体 AdamW（解耦权重衰减）。',
+    desc: 'Bias-corrected first and second moment estimates give each parameter an adaptive learning rate: robust to hyperparameters, fast-converging, good by default. The de facto standard of deep learning — every LLM still uses its variant AdamW (decoupled weight decay).',
     latex: [
       'm_t=\\beta_1 m_{t-1}+(1-\\beta_1)g_t,\\;\\; v_t=\\beta_2 v_{t-1}+(1-\\beta_2)g_t^2',
       '\\theta\\leftarrow\\theta-\\eta\\,\\hat{m}_t/(\\sqrt{\\hat{v}_t}+\\varepsilon)'
     ],
-    shapes: ['每个参数 2 个动矩状态'],
-    code: "m = b1*m + (1-b1)*g;          // 一阶动矩\nv = b2*v + (1-b2)*g.square(); // 二阶动矩\ntheta -= lr * m.hat().div(v.hat().sqrt().add(eps));",
-    params: '每参数 2 倍状态量',
+    shapes: ['two moment states per parameter'],
+    code: "m = b1*m + (1-b1)*g;          // first moment\nv = b2*v + (1-b2)*g.square(); // second moment\ntheta -= lr * m.hat().div(v.hat().sqrt().add(eps));",
+    params: '2x state per parameter',
     refs: ['Kingma & Ba 2014 · Adam: A Method for Stochastic Optimization',
            'Loshchilov & Hutter 2017 · AdamW']
   },
   'bn': {
     title: 'Batch Normalization（2015）',
-    desc: '对每个 mini-batch 做标准化 + 可学习缩放平移：训练提速、更稳、可用更大学习率。但依赖 batch 统计量，在序列模型/小 batch 下失效——由此演化出按特征维归一化的 LayerNorm（2016），再简化为 RMSNorm（2019）：Transformer 归一化线的历史起点在这里。',
+    desc: 'Per-mini-batch normalization + learnable scale/shift: faster training, more stable, larger learning rates usable. But it depends on batch statistics and breaks on sequence models/small batches — evolving into feature-wise LayerNorm (2016), then simplified into RMSNorm (2019): the historical starting point of Transformer normalization.',
     latex: [
       '\\hat{x}=\\frac{x-\\mu_B}{\\sqrt{\\sigma_B^2+\\varepsilon}}\\cdot\\gamma+\\beta'
     ],
-    shapes: ['按 batch 维归一化 [B,L,d]','推理用滑动平均'],
+    shapes: ['normalized along the batch dim [B,L,d]','running averages for inference'],
     code: "const mu = x.mean(0, true), var_ = x.variance(0, true);\nconst y = x.sub(mu).div(var_.add(eps).sqrt()).mul(g).add(b);",
-    params: 'γ, β + 统计量缓存（2d）',
+    params: 'γ, β + statistics cache (2d)',
     refs: ['Ioffe & Szegedy 2015 · Batch Normalization',
-           'Ba et al. 2016 · Layer Normalization（演进）']
+           'Ba et al. 2016 · Layer Normalization (evolution)']
   },
   'gan': {
     title: 'GAN Generative Adversarial Network (2014)',
-    desc: '生成器 G 与判别器 D 极小极大博弈：G 造假骗过 D，D 升级识破——对抗中 G 学会以假乱真。开启 AI 生成模型时代；与扩散同为生成两大路线，扩散最终在语言上胜出（LLaDA/Mercury），但对抗思想仍活在各类训练技巧中。',
+    desc: 'Generator G and discriminator D play a minimax game: G forges to fool D, D upgrades to catch it — through the duel G learns to make fakes indistinguishable. It opened the era of AI generative models. Diffusion shares the two great generative routes, and diffusion ultimately won on language (LLaDA/Mercury), but adversarial thinking lives on in many training tricks.',
     latex: [
       '\\min_G \\max_D\\; \\mathbb{E}[\\log D(x)]+\\mathbb{E}[\\log(1-D(G(z)))]'
     ],
-    shapes: ['噪声 z → G → 假样本 → D → 真/假'],
-    code: "const fake = G(z);\nconst dLoss = bce(D(x), 1) + bce(D(fake.detach()), 0);\nconst gLoss = bce(D(fake), 1);   // 骗过 D",
-    params: 'G 与 D 各一套',
+    shapes: ['noise z → G → fakes → D → real/fake'],
+    code: "const fake = G(z);\nconst dLoss = bce(D(x), 1) + bce(D(fake.detach()), 0);\nconst gLoss = bce(D(fake), 1);   // fool D",
+    params: 'one set each for G and D',
     refs: ['Goodfellow et al. 2014 · Generative Adversarial Nets']
   },
   'resnet': {
     title: 'ResNet residual network (2016)',
-    desc: '恒等旁路 y = F(x) + x：让网络只学「残差修正」而非完整映射，梯度有了高速通道——152 层不再是问题，深度退化消失。次年 Transformer 的「Add & Norm」直接继承同一思想：本应用架构图里所有琥珀色虚线旁路都是它。',
+    desc: 'Identity bypass y = F(x) + x: networks learn only residual corrections rather than full mappings, giving gradients an express lane — 152 layers stopped being a problem and degradation vanished. Transformer\'s Add & Norm inherited the idea the following year: every amber dashed bypass in these diagrams is this.',
     latex: [
-      'y=\\mathcal{F}(x,\\{W_i\\})+x\\quad\\text{（恒等映射零成本）}'
+      'y=\\mathcal{F}(x,\\{W_i\\})+x\\quad\\text{(identity mapping at zero cost)}'
     ],
-    shapes: ['输入与输出同形 → 可直接相加','深度 152+ 层'],
-    code: "const y = block(x).add(x);   // F(x) + x\n// Transformer 里：h = ln(x.add(attn))",
-    params: '与普通层相同（旁路零参数）',
+    shapes: ['input and output same shape → add directly','152+ layers deep'],
+    code: "const y = block(x).add(x);   // F(x) + x\n// in Transformers: h = ln(x.add(attn))",
+    params: 'same as ordinary layers (zero parameters in the bypass)',
     refs: ['He et al. 2016 · Deep Residual Learning for Image Recognition']
   },
   'ebt': {
     title: 'Energy-Based Transformers（2025）',
-    desc: '用能量函数 E(x,y) 给「输入-候选答案」打分，推理 = 沿能量下降的迭代优化——把 System 2 式深思做进架构本身，而非靠生成更长的思维链。与 TTT/Titans 同属「测试时计算」路线；训练更稳、泛化更好的主张尚待更大规模验证，2025 年最值得盯的新方向之一。',
+    desc: 'Scores input-candidate pairs with energy function E(x,y); reasoning = iterative optimization descending the energy — building System-2 deliberation into the architecture itself rather than generating longer chains of thought. Same test-time-compute camp as TTT/Titans; claims of more stable training and better generalization await larger-scale validation — one of 2025\'s most watchable new directions.',
     latex: [
-      'y^{(k+1)}=y^{(k)}-\\eta\\,\\nabla_y\\,E_\\theta(x,\\,y^{(k)}),\\quad y^{(0)}=\\text{初始猜测}'
+      'y^{(k+1)}=y^{(k)}-\\eta\\,\\nabla_y\\,E_\\theta(x,\\,y^{(k)}),\\quad y^{(0)}=\\text{initial guess}'
     ],
-    shapes: ['每步：能量梯度下降','推理算力 ↔ 答案质量 可调'],
-    code: "let y = initGuess(x);\nfor (let k = 0; k < K; k++)\n  y = y.sub(gradY(x, y).mul(eta));   // 能量下降\nreturn y;",
-    params: '能量网络 E_θ',
+    shapes: ['each step: energy gradient descent','inference compute ↔ answer quality, adjustable'],
+    code: "let y = initGuess(x);\nfor (let k = 0; k < K; k++)\n  y = y.sub(gradY(x, y).mul(eta));   // energy descent\nreturn y;",
+    params: 'energy network E_θ',
     refs: ['Khona et al. 2025 · Energy-Based Transformers are Scalable Learners']
   },
   'v4': {
     title: 'DeepSeek V4: CSA sparse attention + mHC (Apr 2026)',
-    desc: 'V4-Pro 1.6T 总参/49B 激活（MIT 协议开源），1M 上下文。两大架构更新：①CSA 压缩稀疏注意力 + HCA，把 1M 上下文的 KV Cache 压到 V3.2 的约 10%；②mHC（流形约束超连接）把残差通路加宽并施加流形约束，改进深层信息流。三档推理模式（Non-Think / Think High / Think Max）把「思考深度」做成 API 参数。',
+    desc: 'V4-Pro: 1.6T total / 49B active params (MIT open source), 1M context. Two architectural updates: 1) CSA compressed sparse attention + HCA compresses the 1M-context KV cache to ~10 percent of V3.2s; 2) mHC (manifold-constrained hyper-connections) widens residual pathways and adds manifold constraints, improving deep information flow. Three inference modes (Non-Think / Think High / Think Max) turn thinking depth into an API parameter.',
     latex: [
       '\\text{CSA：KV Cache}(1M)\\approx 10\\%\\times V3.2',
-      'mHC:\\text{ 残差通路加宽 + 流形约束}'
+      'mHC:\\text{ widened residual pathways + manifold constraint}'
     ],
-    shapes: ['1.6T 总参 / 49B 激活（MoE）','上下文 1M'],
-    code: "// API 层切换思考深度\nconst out = v4(prompt, { think: 'high' });",
-    params: '1.6T 总参 / 49B 激活',
+    shapes: ['1.6T total / 49B active params (MoE)','1M context'],
+    code: "// switch thinking depth at the API layer\nconst out = v4(prompt, { think: 'high' });",
+    params: '1.6T total / 49B active params',
     refs: ['DeepSeek-AI 2026 · DeepSeek-V4 Technical Report']
   },
   'k3': {
     title: 'Kimi K3: full-stack component replacement (Jul 2026)',
-    desc: '首个开源 3T 级模型（2.8T 参数、896 专家选 16、原生视觉、1M 上下文）。Kimi Linear 论文的 2.8T 生产化，全栈组件为推理效率调优：KDA+门控 MLA 混合注意力（69+24 层）、LatentMoE（路由前降维压缩通信）、Attention Residuals（跨层残差按注意力权重加权）、全栈 NoPE——首个彻底去掉 RoPE 的前沿模型，位置信息由因果掩码与 KDA 状态隐式携带。',
+    desc: 'The first open-source 3T-class model (2.8T parameters, 896 experts choose 16, native vision, 1M context). The 2.8T productionization of the Kimi Linear paper with every component tuned for inference efficiency: KDA+gated MLA hybrid attention (69+24 layers), LatentMoE (pre-routing dimension reduction compresses communication), Attention Residuals (cross-layer residuals weighted by attention), full-stack NoPE — the first frontier model to drop RoPE entirely; positions carried implicitly by the causal mask and KDA state.',
     latex: [
-      '\\text{K3}=69\\times\\text{KDA}+24\\times\\text{门控MLA}+\\text{LatentMoE}(896\\text{选}16)+\\text{AttnRes}+\\text{NoPE}'
+      '\\text{K3}=69\\times\\text{KDA}+24\\times\\text{gated MLA}+\\text{LatentMoE}(896\\text{choose}16)+\\text{AttnRes}+\\text{NoPE}'
     ],
-    shapes: ['2.8T 总参 / ~32B 级激活（1.8%）','原生多模态 · 1M 上下文'],
-    code: "// 2026 主线：组件级替换（推理效率调优）\nMoE       → LatentMoE;\nAttention → MLA + KDA 线性混合;\nResidual  → Attention Residuals;\nRoPE      → NoPE;",
-    params: '2.8T 总参 / ~32B 激活',
+    shapes: ['2.8T total / ~32B active (1.8%)','native multimodal · 1M context'],
+    code: "// 2026 mainstream: component-level swaps (inference-efficiency tuned)\nMoE       → LatentMoE;\nAttention → MLA + KDA linear hybrid;\nResidual  → Attention Residuals;\nRoPE      → NoPE;",
+    params: '2.8T total / ~32B active params',
     refs: ['Moonshot AI 2026 · Kimi K3: Open Frontier Intelligence',
            'Raschka 2026 · Kimi K3 Architecture Notes']
   }
@@ -915,7 +915,7 @@ const ARCH_SPECIAL_EDGES = [
   /* pe → 编码器栈入口 */
   { d:'M 178 218 L 178 262', label:'' },
   /* 编码器输出 → 解码器交叉注意力（K/V 记忆） */
-  { d:'M 276 457 C 350 457, 384 335, 458 335', label:'K, V（编码器记忆）', lx:352, ly:378 },
+  { d:'M 276 457 C 350 457, 384 335, 458 335', label:'K, V (encoder memory)', lx:352, ly:378 },
   /* dec-embed → 解码器栈入口 */
   { d:'M 556 154 L 556 198', label:'' },
   /* dec-an3 → 输出层 */
@@ -932,18 +932,18 @@ const ARCH_RESIDUALS = [
 
 const ARCH_VIEW_PRE = {
   colTitles: [
-    { x:330, y:92,  text:'① 循环时代：状态逐步传递，长程依赖路径 O(t)' },
-    { x:556, y:312, text:'② 注意力革命：任意位置直连，路径 O(1)' }
+    { x:330, y:92,  text:'① The recurrent era: state passes step by step; long-range dependency path O(t)' },
+    { x:556, y:312, text:'② The attention revolution: any position connects directly; path O(1)' }
   ],
   nodes: [
     { id:'rnn', x:24, y:120, label:'Vanilla RNN (1990)', sub:'hₜ = φ(W·hₜ₋₁ + U·xₜ)', detail:'rnn',
-      tip:'一切序列建模的起点：隐藏状态沿时间递推' },
+      tip:'the origin of all sequence modeling: hidden state recurses through time' },
     { id:'lstm', x:282, y:120, label:'LSTM (1997) / GRU (2014)', sub:'gated memory mitigates vanishing gradients', detail:'lstm',
       tip:'Input/forget/output gates control cell state; GRU is its simplification' },
     { id:'s2s', x:540, y:120, label:'Seq2Seq (2014)', sub:'Encoder-Decoder + fixed-vector bottleneck', detail:'s2s',
       tip:'Established the MT paradigm, but squeezes the whole sentence into a fixed-length vector' },
     { id:'batt', x:282, y:340, label:'Additive attention (2015)', sub:'decoder progressively looks back at all encoder states', detail:'batt',
-      tip:'Bahdanau 注意力：对齐权重 αₜᵢ 动态加权编码状态（同年 Luong 提出乘性版本）' },
+      tip:'Bahdanau attention: alignment weights αₜᵢ dynamically weight encoder states (Luong proposed the multiplicative version the same year)' },
     { id:'selfattn', x:540, y:340, label:'Self-attention (2017)', sub:'Q·K·V fully parallel → see 2017 Original', detail:'selfattn',
       tip:'Generalizes attention from decoder-looks-at-encoder to sequence-looks-at-itself, replacing recurrence' }
   ],
@@ -963,24 +963,24 @@ const ARCH_VIEW_DENSE = {
     { x:380, y:26, text:'Decoder-Only · Dense（GPT → LLaMA → Qwen-Dense）' }
   ],
   nodes: [
-    { id:'tok', x:282, y:36, label:'Input Tokens', sub:'分词 → 词表索引', detail:'input',
-      tip:'BPE 分词后的 token 索引序列' },
+    { id:'tok', x:282, y:36, label:'Input Tokens', sub:'tokenization → vocab indices', detail:'input',
+      tip:'Token index sequence after BPE tokenization' },
     { id:'emb', x:282, y:92, label:'Embedding', sub:'lookup then × √d_model', detail:'embed',
-      tip:'词向量查表并放大（LLaMA 起不再乘 √d）' },
-    { id:'rope', x:282, y:148, label:'+ RoPE', sub:'旋转位置编码（绝对位置·相对表达）', detail:'rope',
-      tip:'把位置编码为二维旋转，内积只依赖相对位置；ALiBi/YaRN 等为变体' },
-    { id:'rms1', x:282, y:218, label:'RMSNorm', sub:'Pre-Norm（先归一化再子层）', detail:'rmsnorm',
-      tip:'Pre-LN/RMSNorm 让深层网络训练稳定，取代 2017 的 Post-LN' },
-    { id:'gqa', x:282, y:276, label:'GQA 掩码自注意力', sub:'因果掩码 · KV 头分组共享', detail:'gqa',
-      tip:'Qwen/LLaMA-2+ 的标配：KV 头少于 Q 头，Cache 直接缩小' },
-    { id:'res1', x:282, y:334, label:'⊕ Residual', detail:'addnorm', tip:'残差直连，梯度高速通道' },
-    { id:'rms2', x:282, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'第二个 Pre-Norm' },
-    { id:'swiglu', x:282, y:450, label:'SwiGLU FFN', sub:'门控：d → d_ff → d', detail:'swiglu',
-      tip:'SiLU 门控分支 ⊙ 线性分支，取代 ReLU FFN' },
-    { id:'res2', x:282, y:508, label:'⊕ Residual', detail:'addnorm', tip:'第二处残差' },
-    { id:'lnf', x:282, y:580, label:'Final RMSNorm', detail:'rmsnorm', tip:'输出前的最后一次归一化' },
-    { id:'head', x:282, y:638, label:'LM Head · Softmax(|V|)', sub:'常与 Embedding 权重共享', detail:'lm-head',
-      tip:'隐状态 → 全词表分布，逐 token 自回归' }
+      tip:'word-vector lookup then scaled (LLaMA onward drops the √d multiply)' },
+    { id:'rope', x:282, y:148, label:'+ RoPE', sub:'rotary position encoding (absolute-position implementation, relative-position expression)', detail:'rope',
+      tip:'Encodes position as 2D rotation; inner product depends only on relative position. ALiBi/YaRN are variants.' },
+    { id:'rms1', x:282, y:218, label:'RMSNorm', sub:'Pre-Norm (normalize before sublayer)', detail:'rmsnorm',
+      tip:'Pre-LN/RMSNorm stabilizes deep-network training, replacing Post-LN from 2017' },
+    { id:'gqa', x:282, y:276, label:'GQA masked self-attention', sub:'causal mask · grouped-shared KV heads', detail:'gqa',
+      tip:'Standard on Qwen/LLaMA-2+: fewer KV heads than Q heads shrinks the cache directly' },
+    { id:'res1', x:282, y:334, label:'⊕ Residual', detail:'addnorm', tip:'direct residual; an express lane for gradients' },
+    { id:'rms2', x:282, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'second Pre-Norm' },
+    { id:'swiglu', x:282, y:450, label:'SwiGLU FFN', sub:'gating: d → d_ff → d', detail:'swiglu',
+      tip:'SiLU gated branch ⊙ linear branch, replacing ReLU FFN' },
+    { id:'res2', x:282, y:508, label:'⊕ Residual', detail:'addnorm', tip:'second residual' },
+    { id:'lnf', x:282, y:580, label:'Final RMSNorm', detail:'rmsnorm', tip:'final normalization before output' },
+    { id:'head', x:282, y:638, label:'LM Head · Softmax(|V|)', sub:'often weight-tied with the embedding', detail:'lm-head',
+      tip:'hidden state → full-vocab distribution; autoregressive token by token' }
   ],
   frames: [
     { x:264, y:196, w:232, h:376, label:'Decoder Block × N（Pre-Norm）' }
@@ -1001,29 +1001,29 @@ const ARCH_VIEW_MOE = {
     { x:330, y:26, text:'Decoder-Only · MoE（Switch → Mixtral → DeepSeek-V3 → Qwen3 → K2）' }
   ],
   nodes: [
-    { id:'tok', x:232, y:36, label:'Input Tokens', sub:'分词 → 词表索引', detail:'input', tip:'同 Dense 视图' },
-    { id:'emb', x:232, y:92, label:'Embedding', detail:'embed', tip:'词向量查表' },
-    { id:'rope', x:232, y:148, label:'+ RoPE', detail:'rope', tip:'旋转位置编码' },
-    { id:'rms1', x:232, y:218, label:'RMSNorm', sub:'Pre-Norm', detail:'rmsnorm', tip:'Pre-Norm 归一化' },
-    { id:'gqa', x:232, y:276, label:'GQA 掩码自注意力', detail:'gqa', tip:'KV 分组共享的因果自注意力' },
-    { id:'an1', x:232, y:334, label:'Add & Norm', detail:'addnorm', tip:'注意力残差 + 归一化' },
-    { id:'rms2', x:232, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'MoE 子层的 Pre-Norm' },
-    { id:'router', x:232, y:450, label:'MoE Router 门控', sub:'softmax → Top-K 稀疏激活', detail:'moe-router',
-      tip:'每个 token 只选 K 个专家：参数规模与计算量解耦' },
+    { id:'tok', x:232, y:36, label:'Input Tokens', sub:'tokenization → vocab indices', detail:'input', tip:'same as the Dense view' },
+    { id:'emb', x:232, y:92, label:'Embedding', detail:'embed', tip:'word-vector lookup' },
+    { id:'rope', x:232, y:148, label:'+ RoPE', detail:'rope', tip:'rotary position encoding' },
+    { id:'rms1', x:232, y:218, label:'RMSNorm', sub:'Pre-Norm', detail:'rmsnorm', tip:'Pre-Norm normalization' },
+    { id:'gqa', x:232, y:276, label:'GQA masked self-attention', detail:'gqa', tip:'Causal self-attention with grouped-shared KV' },
+    { id:'an1', x:232, y:334, label:'Add & Norm', detail:'addnorm', tip:'attention residual + normalization' },
+    { id:'rms2', x:232, y:392, label:'RMSNorm', detail:'rmsnorm', tip:'Pre-Norm of the MoE sublayer' },
+    { id:'router', x:232, y:450, label:'MoE router gating', sub:'softmax → top-K sparse activation', detail:'moe-router',
+      tip:'each token picks K experts only: decoupling parameter scale from compute' },
     { id:'wsum', x:232, y:508, label:'Sparse weighted synthesis', sub:'y = Σ gᵢ · Expertᵢ(x)', detail:'moe-sum',
-      tip:'仅被选中的专家输出参与合成' },
-    { id:'an2', x:232, y:566, label:'Add & Norm', detail:'addnorm', tip:'MoE 残差 + 归一化' },
+      tip:'only selected experts\' outputs join the synthesis' },
+    { id:'an2', x:232, y:566, label:'Add & Norm', detail:'addnorm', tip:'MoE residual + normalization' },
     { id:'lnf', x:232, y:624, label:'Final RMSNorm + LM Head', sub:'Linear → Softmax(|V|)', detail:'lm-head',
-      tip:'输出层（DeepSeek-V3 的 MTP 头略）' },
-    { id:'exp1', x:532, y:406, label:'专家 1 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
-    { id:'exp2', x:532, y:454, label:'专家 2 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
-    { id:'exp3', x:532, y:502, label:'专家 3 · SwiGLU', detail:'moe-expert', tip:'一个专家 = 一个 SwiGLU FFN' },
-    { id:'exp4', x:532, y:550, label:'专家 E · SwiGLU', sub:'（示意 4 个，实际 64~384 个）', detail:'moe-expert',
-      tip:'Qwen3: 128 选 8 · K2: 384 选 8 · DeepSeek-V3: 256 选 8 + 1 共享' }
+      tip:'output layer (DeepSeek-V3\'s MTP heads omitted)' },
+    { id:'exp1', x:532, y:406, label:'Expert 1 · SwiGLU', detail:'moe-expert', tip:'one expert = one SwiGLU FFN' },
+    { id:'exp2', x:532, y:454, label:'Expert 2 · SwiGLU', detail:'moe-expert', tip:'one expert = one SwiGLU FFN' },
+    { id:'exp3', x:532, y:502, label:'Expert 3 · SwiGLU', detail:'moe-expert', tip:'one expert = one SwiGLU FFN' },
+    { id:'exp4', x:532, y:550, label:'Expert E · SwiGLU', sub:'(4 shown for illustration; actually 64~384)', detail:'moe-expert',
+      tip:'Qwen3: 128 choose 8 · K2: 384 choose 8 · DeepSeek-V3: 256 choose 8 + 1 shared' }
   ],
   frames: [
     { x:214, y:196, w:232, h:394, label:'Decoder Block × N' },
-    { x:514, y:388, w:232, h:204, label:'Experts × E · Top-K 激活' }
+    { x:514, y:388, w:232, h:204, label:'Experts × E · Top-K activation' }
   ],
   edges: [
     ['tok','emb'], ['emb','rope'], ['rope','rms1'], ['rms1','gqa'], ['gqa','an1'],
@@ -1048,34 +1048,34 @@ const ARCH_VIEW_MOE = {
 const ARCH_VIEW_ATTN = {
   nodeW: 160,
   colTitles: [
-    { x:370, y:90,  text:'路线 A · KV Cache 压缩（推理显存/带宽）' },
-    { x:370, y:300, text:'路线 B · 计算与访存效率（长上下文）' },
-    { x:370, y:510, text:'路线 C · 上下文扩展与训练稳定化' }
+    { x:370, y:90,  text:'Route A · KV cache compression (inference memory/bandwidth)' },
+    { x:370, y:300, text:'Route B · compute and memory-access efficiency (long context)' },
+    { x:370, y:510, text:'Route C · context extension and training stabilization' }
   ],
   nodes: [
-    { id:'mha-ev', x:20, y:120, label:'MHA 多头注意力', sub:'2017 · h independent KV groups', detail:'mha-ev',
-      tip:'基线：KV Cache = 2·L·h·dₕ' },
-    { id:'mqa', x:200, y:120, label:'MQA 多查询', sub:'2019 · all heads share 1 KV group', detail:'mqa',
+    { id:'mha-ev', x:20, y:120, label:'MHA multi-head attention', sub:'2017 · h independent KV groups', detail:'mha-ev',
+      tip:'baseline: KV cache = 2·L·h·dₕ' },
+    { id:'mqa', x:200, y:120, label:'MQA multi-query', sub:'2019 · all heads share 1 KV group', detail:'mqa',
       tip:'Shazeer：One Write-Head is All You Need' },
-    { id:'gqa', x:380, y:120, label:'GQA 分组查询', sub:'2023 · grouped sharing (Qwen family)', detail:'gqa',
-      tip:'MQA 与 MHA 的折中，Uptraining 转换；LLaMA-2/3、Qwen 标配' },
-    { id:'mla', x:560, y:120, label:'MLA 潜在注意力', sub:'2024 · low-rank compression (DeepSeek)', detail:'mla',
-      tip:'Cache 只存潜在向量 c，按需升维还原 K/V；K2 沿用' },
+    { id:'gqa', x:380, y:120, label:'GQA grouped-query', sub:'2023 · grouped sharing (Qwen family)', detail:'gqa',
+      tip:'MQA-MHA compromise via uptraining; standard on LLaMA-2/3 and Qwen' },
+    { id:'mla', x:560, y:120, label:'MLA latent attention', sub:'2024 · low-rank compression (DeepSeek)', detail:'mla',
+      tip:'Cache stores only latent vector c; K/V restored on demand via up-projection; adopted by K2' },
     { id:'flash', x:20, y:330, label:'FlashAttention', sub:'2022 · tiled online softmax', detail:'flash',
-      tip:'IO 感知内核：数学不变，显存 O(L²)→O(L)；v2/v3 持续进化' },
-    { id:'sparse', x:200, y:330, label:'稀疏注意力', sub:'2025 · NSA / MoBA', detail:'sparse',
-      tip:'只算重要块且稀疏模式可训练：DeepSeek NSA、Kimi MoBA' },
-    { id:'linear', x:380, y:330, label:'线性注意力', sub:'2020-25 · kernelized O(Ld²)', detail:'linear',
-      tip:'φ(Q)(φ(K)ᵀV)：与序列长度线性，见「Linear·SSM」视图' },
-    { id:'hybrid', x:560, y:330, label:'混合架构', sub:'Jamba · Griffin · KDA', detail:'hybrid',
+      tip:'IO-aware kernel: math unchanged, memory O(L²)→O(L); v2/v3 keep evolving' },
+    { id:'sparse', x:200, y:330, label:'Sparse attention', sub:'2025 · NSA / MoBA', detail:'sparse',
+      tip:'compute only important blocks with trainable sparsity: DeepSeek NSA, Kimi MoBA' },
+    { id:'linear', x:380, y:330, label:'Linear attention', sub:'2020-25 · kernelized O(Ld²)', detail:'linear',
+      tip:'φ(Q)(φ(K)ᵀV): linear in sequence length — see the Linear·SSM view' },
+    { id:'hybrid', x:560, y:330, label:'Hybrid architecture', sub:'Jamba · Griffin · KDA', detail:'hybrid',
       tip:'A few full-attention layers mixed proportionally with many linear layers (Kimi Linear etc.)' },
-    { id:'swa', x:20, y:540, label:'滑动窗口 SWA', sub:'2023 · 局部/全局 5:1 交错', detail:'swa',
+    { id:'swa', x:20, y:540, label:'Sliding-window SWA', sub:'2023 · 5:1 local/global interleaving', detail:'swa',
       tip:'Mistral/Gemma: each layer sees window w only, with sparse global layers' },
-    { id:'ctxext', x:200, y:540, label:'上下文扩展', sub:'PI · NTK · YaRN', detail:'ctx-ext',
+    { id:'ctxext', x:200, y:540, label:'Context extension', sub:'PI · NTK · YaRN', detail:'ctx-ext',
       tip:'RoPE training length → million-token inference: frequency-wise interpolation/extrapolation' },
-    { id:'qknorm', x:380, y:540, label:'训练稳定化', sub:'QK-Norm · soft-cap · z-loss', detail:'qknorm',
+    { id:'qknorm', x:380, y:540, label:'Training stabilization', sub:'QK-Norm · soft-cap · z-loss', detail:'qknorm',
       tip:'The three great stabilizers of LLM training (Gemma 2/3, Chameleon)' },
-    { id:'diff', x:560, y:540, label:'差分注意力', sub:'2024 · dual-softmax denoising', detail:'diff',
+    { id:'diff', x:560, y:540, label:'Differential attention', sub:'2024 · dual-softmax denoising', detail:'diff',
       tip:'DIFF Transformer: differential-amplifier idea, hallucination-resistant' }
   ],
   frames: [],
@@ -1126,7 +1126,7 @@ const ARCH_VIEW_SSM = {
 
 const ARCH_VIEW_GEN = {
   colTitles: [
-    { x:380, y:26, text:'Generation paradigms：自回归及其挑战者' }
+    { x:380, y:26, text:'Generation paradigms: autoregression and its challengers' }
   ],
   nodes: [
     { id:'autoreg', x:282, y:48, label:'Autoregressive NTP (mainstream)', sub:'GPT family · left-to-right token by token', detail:'autoreg',
@@ -1159,17 +1159,17 @@ const ARCH_VIEW_FRONTIER = {
   nodes: [
     { id:'blt', x:80, y:100, label:'BLT byte-level LM', sub:'2024 · entropy-driven dynamic patches', detail:'blt',
       tip:'Meta: drop BPE, allocate compute by information entropy' },
-    { id:'memlayer', x:80, y:210, label:'记忆层 Memory', sub:'2024 · sparse key-value replaces FFN', detail:'memlayer',
+    { id:'memlayer', x:80, y:210, label:'Memory layers', sub:'2024 · sparse key-value replaces FFN', detail:'memlayer',
       tip:'Store knowledge in memory, reason via attention; large factuality gains' },
-    { id:'looped', x:458, y:100, label:'深度循环 / 潜推理', sub:'2018→25 · adaptive recurrent depth', detail:'looped',
+    { id:'looped', x:458, y:100, label:'Deep looping / latent reasoning', sub:'2018→25 · adaptive recurrent depth', detail:'looped',
       tip:'Universal Transformer returns: loop more on hard problems' },
-    { id:'ttt', x:458, y:210, label:'TTT 层', sub:'2024 · hidden state = online learner', detail:'ttt',
+    { id:'ttt', x:458, y:210, label:'TTT layer', sub:'2024 · hidden state = online learner', detail:'ttt',
       tip:'Sequence modeling is test-time training' },
-    { id:'titans', x:269, y:330, label:'Titans 神经记忆', sub:'2025 · surprise-driven · tens-of-millions context', detail:'titans',
+    { id:'titans', x:269, y:330, label:'Titans neural memory', sub:'2025 · surprise-driven · tens-of-millions context', detail:'titans',
       tip:'Google: long-term memory and short-term attention divide the labor' },
-    { id:'multimodal', x:269, y:440, label:'多模态融合', sub:'LLaVA · Chameleon · native Omni', detail:'multimodal',
+    { id:'multimodal', x:269, y:440, label:'Multimodal fusion', sub:'LLaVA · Chameleon · native Omni', detail:'multimodal',
       tip:'Vision/audio unified into tokens for the Transformer' },
-    { id:'ebt', x:470, y:330, label:'EBT 能量 Transformer', sub:'2025 · implicit reasoning via energy functions', detail:'ebt',
+    { id:'ebt', x:470, y:330, label:'EBT Energy-based Transformer', sub:'2025 · implicit reasoning via energy functions', detail:'ebt',
       tip:'Reasoning = iterative descent on energy minimization; a new test-time-compute branch' }
   ],
   frames: [],
@@ -1184,28 +1184,28 @@ const ARCH_VIEW_FRONTIER = {
 
 const ARCH_VIEW_TRAIN = {
   colTitles: [
-    { x:330, y:60,  text:'三阶段范式：预训练 → 指令微调 → 对齐' },
-    { x:330, y:200, text:'关键分支与底层规律' }
+    { x:330, y:60,  text:'The three-stage paradigm: pre-training → instruction tuning → alignment' },
+    { x:330, y:200, text:'key branches and underlying laws' }
   ],
   nodes: [
-    { id:'pretrain', x:24, y:100, label:'预训练 Pre-training',
-      sub:'自监督 NTP/MLM · 万亿 token', detail:'pretrain',
-      tip:'语言/知识/推理底子的来源；对齐阶段不注入新能力' },
-    { id:'sft', x:282, y:100, label:'SFT 指令微调',
-      sub:'2021/22 · 人类示范监督学习', detail:'sft',
-      tip:'让基座「听懂指令」；数据质量 >> 数量（LIMA）' },
-    { id:'rlhf', x:540, y:100, label:'RLHF 强化学习',
-      sub:'2022 · 奖励模型 + PPO 对齐', detail:'rlhf',
-      tip:'从「会补全」到「会对话」——ChatGPT 的直接来源' },
+    { id:'pretrain', x:24, y:100, label:'Pre-training',
+      sub:'self-supervised NTP/MLM · trillion tokens', detail:'pretrain',
+      tip:'source of language/knowledge/reasoning foundations; alignment adds no new capabilities' },
+    { id:'sft', x:282, y:100, label:'SFT instruction tuning',
+      sub:'2021/22 · supervised learning from human demonstrations', detail:'sft',
+      tip:'teaches the base model to follow instructions; data quality >> quantity (LIMA)' },
+    { id:'rlhf', x:540, y:100, label:'RLHF reinforcement learning',
+      sub:'2022 · reward model + PPO alignment', detail:'rlhf',
+      tip:'from completion to conversation — the direct ancestor of ChatGPT' },
     { id:'scaling', x:24, y:240, label:'Scaling Laws',
       sub:'2020/22 · Kaplan / Chinchilla', detail:'scaling',
-      tip:'损失随规模幂律下降；参数与数据等比扩展' },
-    { id:'rlvr', x:282, y:240, label:'可验证奖励 RL',
-      sub:'2024-25 · R1 式长推理链训练', detail:'rlvr',
-      tip:'数学/代码用标准答案做奖励；GRPO 免 critic' },
+      tip:'loss falls with scale as a power law; parameters and data scale proportionally' },
+    { id:'rlvr', x:282, y:240, label:'Verifiable-reward RL',
+      sub:'2024-25 · R1-style long chain-of-thought training', detail:'rlvr',
+      tip:'math/code reward from standard answers; GRPO needs no critic' },
     { id:'dpo', x:540, y:240, label:'DPO direct preference optimization',
-      sub:'2023 · 免显式奖励模型', detail:'dpo',
-      tip:'把 RLHF 两步折叠为一步分类式损失' }
+      sub:'2023 · no explicit reward model', detail:'dpo',
+      tip:'folds RLHF\'s two steps into one classification-style loss' }
   ],
   frames: [],
   edges: [],
@@ -1230,7 +1230,7 @@ const ARCH_VIEW_DAWN = {
     { id:'mp', x:24, y:110, label:'MP Neuron (1943)',
       sub:'weighted sum + threshold firing', detail:'mp',
       tip:'The mathematical origin of neural networks: any Boolean function can be composed from them' },
-    { id:'hebb', x:208, y:110, label:'Hebb 规则 (1949)',
+    { id:'hebb', x:208, y:110, label:'Hebb rule (1949)',
       sub:'co-activation → stronger connections', detail:'hebb',
       tip:'The first learning theory; the intellectual source of unsupervised/contrastive learning' },
     { id:'perceptron', x:392, y:110, label:'Perceptron (1958)',
@@ -1307,296 +1307,296 @@ const HISTORY = [
   /* ---- 第一阶段：神经网络诞生 1943-1986 ---- */
   { year:1943, view:'dawn', name:'MP Neuron',
     paper:'A Logical Calculus of the Ideas Immanent in Nervous Activity (McCulloch & Pitts)',
-    contrib:'神经活动逻辑演算，人工神经网络理论基石',
+    contrib:'logical calculus of nervous activity; theoretical foundation of artificial neural networks',
     highlights:['mp'],
-    note:'一切的开始：把「思考」形式化为weighted sum + threshold firing。' },
+    note:'Where it all began: formalizing thought as weighted sums + threshold firing.' },
   { year:1949, view:'dawn', name:'Hebbian learning rule',
     paper:'The Organization of Behavior (Hebb)',
-    contrib:'共同激活强化神经元连接：第一个学习规则',
+    contrib:'co-activation strengthens neuron connections: the first learning rule',
     highlights:['hebb','mp'],
-    note:'「fire together, wire together」——无监督与对比学习思想的源头。' },
+    note:'Fire together, wire together — the intellectual source of unsupervised and contrastive learning.' },
   { year:1958, view:'dawn', name:'Perceptron',
     paper:'The Perceptron (Rosenblatt)',
-    contrib:'可学习权重 + 收敛定理，开启神经网络研究先河',
+    contrib:'learnable weights + convergence theorem; opened the field of neural network research',
     highlights:['perceptron'],
-    note:'第一台真正「学习」的机器（硬件 Mark I），媒体一度预言机器将「走路、说话、有意识」。' },
+    note:'The first machine that truly learned (hardware Mark I); media once predicted machines would walk, talk and be conscious.' },
   { year:1969, view:'dawn', name:'\'Perceptrons\' and the winter',
     paper:'Perceptrons (Minsky & Papert)',
-    contrib:'证明单层无法表示 XOR，推动理论反思',
+    contrib:'proved single layers cannot represent XOR, prompting theoretical reflection',
     highlights:['winter'],
-    note:'一本书冻结一个领域：经费枯竭，第一次 AI 寒冬——解药（多层+Backpropagation）17 年后才到。' },
+    note:'One book froze a field: funding dried up, the first AI winter — the cure (depth + backprop) took 17 years to arrive.' },
   { year:1980, view:'dawn', name:'Neocognitron',
     paper:'Neocognitron: A Self-organizing Neural Network Model (Fukushima)',
-    contrib:'层次化神经网络，卷积思想基础',
+    contrib:'hierarchical neural network; foundation of convolutional thinking',
     highlights:['neocognitron'],
-    note:'交替的特征提取与池化层——十年后 LeNet、二十年后 AlexNet 都在重复这个结构。' },
+    note:'Alternating feature-extraction and pooling layers — LeNet repeated this a decade later, AlexNet two decades later.' },
   { year:1986, view:'dawn', name:'Backpropagation',
     paper:'Learning Representations by Back-propagating Errors (Rumelhart, Hinton & Williams)',
-    contrib:'chain rule backpropagates layer by layer，多层网络有效训练',
+    contrib:'chain rule propagates backward layer by layer; multi-layer networks train effectively',
     highlights:['backprop'],
-    note:'寒冬的解药终于到来：多层网络第一次训得动。今天每个 LLM 训练的核心仍是它。' },
+    note:'The winter\'s cure finally arrived: multi-layer networks became trainable for the first time. Still the core of every LLM\'s training today.' },
   /* ---- 前史：循环时代 ---- */
   { year:1990, view:'pre', name:'Vanilla RNN',
     paper:'Finding Structure in Time (Elman)',
-    contrib:'一切序列建模的起点：隐藏状态沿时间递推',
+    contrib:'the origin of all sequence modeling: hidden state recurses through time',
     highlights:['rnn'],
-    note:'最原始的架构：t 时刻必须等 t−1 算完，梯度连乘导致只能记住约 10~20 步——并行与长程依赖是贯穿 30 年的两道坎。' },
+    note:'The most primitive architecture: step t must wait for t−1, and gradient products limit memory to ~10-20 steps — parallelism and long-range dependencies were the twin obstacles for 30 years.' },
   { year:1997, view:'pre', name:'LSTM',
     paper:'Long Short-Term Memory (Hochreiter & Schmidhuber)',
-    contrib:'门控记忆单元，缓解循环网络的梯度消失',
+    contrib:'gated memory cell eases vanishing gradients in recurrent networks',
     highlights:['rnn','lstm'],
-    note:'给 RNN 装上传送带：细胞状态近似线性流动。统治序列建模 15 年（GRU 是其 2014 年简化版）。' },
+    note:'A conveyor belt for the RNN: cell state flows near-linearly. It ruled sequence modeling for 15 years (GRU is its 2014 simplification).' },
   { year:1998, view:'dawn', name:'LeNet (CNN in production)',
     paper:'Gradient-Based Learning Applied to Document Recognition (LeCun et al.)',
-    contrib:'卷积网络落地手写数字识别',
+    contrib:'CNN lands on handwritten digit recognition',
     highlights:['neocognitron'],
-    note:'CNN 第一次工业级应用（美国支票识别）——「端到端学习取代特征工程」的早期示范。' },
+    note:'CNN\'s first industrial application (US check recognition) — an early demonstration of end-to-end learning replacing feature engineering.' },
   { year:2006, view:'dawn', name:'DBN Deep Belief Network',
     paper:'A Fast Learning Algorithm for Deep Belief Nets (Hinton & Salakhutdinov)',
-    contrib:'逐层预训练：深度网络高效训练算法',
+    contrib:'layer-wise pre-training: an efficient training algorithm for deep networks',
     highlights:['dbn','backprop'],
-    note:'深度学习复兴的起点；「预训练 + 微调」范式第一次胜利——GPT/BERT 是它的精神后代。' },
+    note:'The start of the deep-learning revival; the first victory of the pre-train + fine-tune paradigm — GPT/BERT are its spiritual descendants.' },
   { year:2012, view:'dawn', name:'AlexNet',
     paper:'ImageNet Classification with Deep Convolutional Neural Networks (Krizhevsky et al.)',
-    contrib:'GPU+ReLU+Dropout 夺冠，引爆深度学习',
+    contrib:'GPU+ReLU+Dropout won ImageNet and ignited deep learning',
     highlights:['alexnet','backprop'],
-    note:'三驾马车（数据/算法/算力）第一次同时到位——此后一切大模型故事的地基。' },
+    note:'Data, algorithms and compute aligned for the first time — the foundation of every large-model story since.' },
   { year:2013, view:'train', name:'DQN deep reinforcement learning',
     paper:'Playing Atari with Deep Reinforcement Learning (Mnih et al.)',
-    contrib:'像素级自学游戏：深度 RL 开山',
+    contrib:'learning games from raw pixels: deep RL begins',
     highlights:['rlvr'],
-    note:'RL 谱系：DQN → AlphaGo → RLHF → R1——强化学习一路走进 LLM 中心舞台。' },
+    note:'RL lineage: DQN → AlphaGo → RLHF → R1 — reinforcement learning worked its way to center stage in LLMs.' },
   { year:2014, view:'pre', name:'Seq2Seq + GRU',
     paper:'Sequence to Sequence Learning (Sutskever et al.) · Learning Phrase Representations (Cho et al.)',
-    contrib:'编码器-解码器框架确立，机器翻译神经网络化',
+    contrib:'the encoder-decoder framework established; machine translation goes neural',
     highlights:['lstm','s2s'],
-    note:'变长→变长的通用范式诞生；但整句被压进一个固定向量，长句信息溢出——瓶颈即机会。' },
+    note:'A general variable-length-to-variable-length paradigm was born; but the whole sentence is squeezed into one fixed vector and long sentences overflow — bottleneck as opportunity.' },
   { year:2014, view:'dawn', name:'GAN generative adversarial nets',
     paper:'Generative Adversarial Nets (Goodfellow et al.)',
-    contrib:'开启 AI 生成模型新时代',
+    contrib:'opened the era of AI generative models',
     highlights:['gan'],
-    note:'生成器与判别器博弈式训练——Generation paradigms线（扩散 LM）的思想远祖。' },
+    note:'Game-theoretic generator-vs-discriminator training — the intellectual ancestor of the diffusion-LM generation line.' },
   { year:2014, view:'dawn', name:'Adam optimizer',
     paper:'Adam: A Method for Stochastic Optimization (Kingma & Ba)',
-    contrib:'自适应动矩优化，训练效率大增',
+    contrib:'adaptive moment optimization greatly improved training efficiency',
     highlights:['adam'],
-    note:'默认即好用的优化器：从Perceptron到 GPT，深度学习的事实标准（LLM 用 AdamW 变体）。' },
+    note:'Good-by-default optimizer: from Perceptron to GPT it has been deep learning\'s de facto standard (LLMs use AdamW variants).' },
   { year:2015, view:'pre', name:'Attention mechanism',
     paper:'Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau et al.)',
-    contrib:'decoder progressively looks back at all encoder states，软对齐',
+    contrib:'decoder progressively looks back at all encoder states; soft alignment',
     highlights:['s2s','batt','selfattn'],
-    note:'注意力的起源：α 权重动态加权编码状态（同年 Luong 提出点积版本）。只差一步——把注意力推广到序列自身。' },
+    note:'The origin of attention: α weights dynamically weight encoder states (Luong proposed the dot-product version the same year). One step short of generalizing attention to the sequence itself.' },
   /* ---- Transformer 与三大范式 ---- */
   { year:2015, view:'attn', name:'BatchNorm',
     paper:'Batch Normalization: Accelerating Deep Network Training (Ioffe & Szegedy)',
-    contrib:'归一化加速训练，提升稳定性',
+    contrib:'normalization accelerates training and improves stability',
     highlights:['qknorm'],
-    note:'归一化演进线起点：BN（按 batch）→ LayerNorm（按特征）→ RMSNorm——Transformer 最终选择后者，BN 对序列/小 batch 不友好是主因。' },
+    note:'Start of the normalization line: BN (batch-wise) → LayerNorm (feature-wise) → RMSNorm — Transformers ultimately chose RMSNorm mainly because BN is unfriendly to sequences/small batches.' },
   { year:2016, view:'dense', name:'ResNet residual network',
     paper:'Deep Residual Learning for Image Recognition (He et al.)',
-    contrib:'残差连接，解决深度网络退化问题',
+    contrib:'residual connections solve deep-network degradation',
     highlights:['res1','res2'],
-    note:'y = F(x) + x：梯度高速通道。次年 Transformer 的「Add & Norm」直接继承——切到 Dense 视图看到的琥珀虚线就是它。' },
+    note:'y = F(x) + x: an express lane for gradients. Transformer\'s Add & Norm inherited it the following year — every amber dashed line you see in the Dense view is this.' },
   { year:2017, view:'orig', name:'Transformer', primary:true,
     paper:'Attention Is All You Need (Vaswani et al.)',
-    contrib:'完全基于注意力，抛弃循环与卷积，训练全并行',
+    contrib:'attention only, no recurrence or convolution; fully parallel training',
     highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2','dec-masked-mha','dec-cross'],
-    note:'分水岭：自注意力让任意两位置 O(1) 直连。此后裂变为三大范式——只用 Encoder（BERT）、只用 Decoder（GPT）、完整 Enc-Dec（T5）。' },
+    note:'The watershed: self-attention connects any two positions at O(1). It then split into three paradigms — Encoder-only (BERT), Decoder-only (GPT), full Enc-Dec (T5).' },
   { year:2018, view:'orig', name:'GPT-1 (the Decoder-Only beginning)',
     paper:'Improving Language Understanding by Generative Pre-Training (Radford et al.)',
-    contrib:'只用 Decoder + 生成式预训练 + 微调',
+    contrib:'Decoder-only + generative pre-training + fine-tuning',
     highlights:['dec-input','dec-embed','dec-masked-mha','dec-an1','out','outp'],
-    note:'「Decoder-Only 也能做理解任务」：12 层 Block + LM Head，自回归目标一用到底——GPT 系路线图的起点。' },
+    note:'Decoder-Only can do understanding tasks too: 12 blocks + LM head, autoregressive objective all the way — the start of the GPT roadmap.' },
   { year:2018, view:'orig', name:'BERT（Encoder-Only）',
     paper:'BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al.)',
-    contrib:'双向编码器预训练 + 微调范式，横扫 NLU 榜单',
+    contrib:'bidirectional encoder pre-train + fine-tune paradigm swept NLU leaderboards',
     highlights:['embed','pe','enc-mha','enc-an1','enc-ffn','enc-an2'],
-    note:'只用 Encoder：双向上下文适合理解类任务（RoBERTa 2019 进一步打磨训练配方）。' },
+    note:'Encoder-only: bidirectional context suits understanding tasks (RoBERTa 2019 refined the recipe further).' },
   { year:2019, view:'orig', name:'GPT-2',
     paper:'Language Models are Unsupervised Multitask Learners (Radford et al.)',
-    contrib:'15 亿参数解码器语言模型，零样本多任务；Pre-LN 确立',
+    contrib:'1.5B-parameter decoder LM; zero-shot multitask; Pre-LN established',
     highlights:['dec-input','dec-embed','dec-masked-mha','dec-an1','dec-ffn','dec-an3','out','outp'],
-    note:'只用 Decoder：因果掩码自回归生成，规模即能力；Pre-LN 取代 Post-LN，深层训练从此稳定。' },
+    note:'Decoder-only: causal-masked autoregressive generation; scale is capability. Pre-LN replaced Post-LN and deep training became stable.' },
   { year:2019, view:'orig', name:'T5 (Enc-Dec revival)',
     paper:'Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (Raffel et al.)',
-    contrib:'一切任务皆文本到文本，Encoder-Decoder 规模化验证',
+    contrib:'everything is text-to-text; scaled validation of Encoder-Decoder',
     highlights:['input','embed','enc-mha','dec-cross','out'],
-    note:'Encoder-Decoder 路线的集大成者（11B）；翻译/摘要等有「输入-输出」结构的任务至今仍常用此范式。' },
+    note:'The culmination of the Encoder-Decoder line (11B); translation/summarization and other input-output tasks still commonly use this paradigm.' },
   { year:2019, view:'train', name:'Origins of RLHF',
     paper:'Fine-Tuning Language Models from Human Preferences (Ziegler et al.)',
-    contrib:'首次系统化：人类偏好 → 奖励 → 强化学习',
+    contrib:'first systematization: human preferences → reward → reinforcement learning',
     highlights:['rlhf'],
-    note:'OpenAI 与 Anthropic 共同的起点：让模型对齐人类偏好，比「训得更大」早了三年。' },
-  { year:2019, view:'attn', name:'MQA 多查询注意力',
+    note:'The common origin of OpenAI and Anthropic: aligning models to human preferences, three years before scaling bigger became the focus.' },
+  { year:2019, view:'attn', name:'MQA multi-query attention',
     paper:'Fast Transformer Decoding: One Write-Head is All You Need (Shazeer)',
-    contrib:'全头共享一组 KV，推理 Cache 骤降 h 倍',
+    contrib:'all heads share one KV group; inference cache shrinks h-fold',
     highlights:['mha-ev','mqa'],
-    note:'效率演进线的第一枪：发现推理瓶颈在 KV Cache 而非参数——此后 MQA→GQA→MLA 一脉相承。' },
+    note:'The first shot of the efficiency-evolution line: finding the inference bottleneck in the KV cache, not parameters — MQA→GQA→MLA followed in one lineage.' },
   { year:2020, view:'orig', name:'GPT-3',
     paper:'Language Models are Few-Shot Learners (Brown et al.)',
-    contrib:'1750 亿参数，上下文少样本学习（few-shot）',
+    contrib:'175B parameters; in-context few-shot learning',
     highlights:['dec-input','dec-masked-mha','out','outp'],
-    note:'结构与 GPT-2 相同，靠规模涌现出上下文学习——大模型时代的起点（ChatGPT 即其 RLHF 后代）。' },
+    note:'Same architecture as GPT-2; scale made in-context learning emerge — the start of the large-model era (ChatGPT is its RLHF descendant).' },
   { year:2020, view:'train', name:'Scaling Laws',
     paper:'Scaling Laws for Neural Language Models (Kaplan et al.)',
-    contrib:'损失随参数/数据/算力幂律下降，可跨数量级外推',
+    contrib:'loss falls as a power law in params/data/compute, extrapolable across orders of magnitude',
     highlights:['scaling'],
-    note:'「大力出奇迹」的定量依据：训练前就能预测大模型性能——2022 年 Chinchilla 修正为参数与数据等比扩展。' },
+    note:'The quantitative basis for brute force at scale: large-model performance is predictable before training — Chinchilla (2022) corrected it to proportional scaling of parameters and data.' },
   { year:2020, view:'orig', name:'ViT (cross-domain)',
     paper:'An Image is Worth 16x16 Words (Dosovitskiy et al.)',
-    contrib:'图像切 patch 当 token：Transformer 统一视觉',
+    contrib:'split images into patches as tokens: Transformer unifies vision',
     highlights:['input','embed','enc-mha','enc-an1'],
-    note:'证明自注意力与模态无关——此后语音(Whisper)、蛋白质(AlphaFold2)全面 Transformer 化。' },
+    note:'Proved self-attention is modality-agnostic — speech (Whisper), proteins (AlphaFold2) all went Transformer afterward.' },
   { year:2020, view:'ssm', name:'Linear Transformer',
     paper:'Transformers are RNNs (Katharopoulos et al.)',
-    contrib:'φ 核化 + 结合律，复杂度 O(L²)→O(Ld²)',
+    contrib:'φ kernelization + associativity; complexity O(L²)→O(Ld²)',
     highlights:['lin'],
-    note:'线性注意力开山：「Transformer 就是 RNN」。效率线与循环复兴线在此交汇。' },
+    note:'The founding work of linear attention: Transformers are RNNs. The efficiency line and the recurrence-revival line converge here.' },
   { year:2021, view:'moe', name:'Switch Transformer',
     paper:'Switch Transformers: Scaling to Trillion Parameter Models (Fedus et al.)',
-    contrib:'Top-1 稀疏路由，万亿参数 MoE（GShard 2020 首创 MoE+Transformer）',
+    contrib:'Top-1 sparse routing; trillion-parameter MoE (GShard 2020 pioneered MoE+Transformer)',
     highlights:['router','exp1','exp2','exp3','exp4','wsum'],
-    note:'MoE 与 Transformer 合体：总参数与单 token 计算解耦——万亿时代的钥匙。' },
+    note:'MoE meets Transformer: total parameters decouple from per-token compute — the key to the trillion-parameter era.' },
   { year:2021, view:'ssm', name:'S4',
     paper:'Efficiently Modeling Long Sequences with Structured State Spaces (Gu et al.)',
-    contrib:'HiPPO + structured SSM，长序列基准横扫',
+    contrib:'HiPPO + structured SSM; swept long-sequence benchmarks',
     highlights:['s4'],
-    note:'状态空间模型回归：连续系统离散化，训练当卷积、推理当 RNN——Mamba 的直系前身。' },
+    note:'The return of state-space models: discretized continuous systems, trained as convolutions and inferred as RNNs — Mamba\'s direct predecessor.' },
   { year:2021, view:'train', name:'FLAN instruction tuning',
     paper:'Finetuned Language Models are Zero-Shot Learners (Wei et al.)',
-    contrib:'指令化任务数据 → 未见任务零样本泛化',
+    contrib:'instruction-formatted task data → zero-shot generalization to unseen tasks',
     highlights:['sft','pretrain'],
-    note:'「指令微调有效」的奠基工作：SFT 阶段由此成为标配，直接催生 InstructGPT 三阶段范式。' },
+    note:'The foundational work showing instruction tuning works: SFT became standard from then on, directly giving rise to the InstructGPT three-stage paradigm.' },
   { year:2022, view:'train', name:'InstructGPT / ChatGPT',
     paper:'Training language models to follow instructions with human feedback (Ouyang et al.)',
-    contrib:'SFT → RLHF → PPO 三阶段范式确立',
+    contrib:'The SFT → RLHF → PPO three-stage paradigm established',
     highlights:['sft','rlhf','pretrain'],
-    note:'1.3B 的 InstructGPT 在人类偏好上胜过 175B 的 GPT-3——「对齐比规模更重要」的标志性证据；同年 11 月 ChatGPT 上线。' },
+    note:'The 1.3B InstructGPT beat the 175B GPT-3 on human preference — landmark evidence that alignment matters more than scale; ChatGPT launched that November.' },
   { year:2022, view:'train', name:'Chinchilla',
     paper:'Training Compute-Optimal Large Language Models (Hoffmann et al.)',
-    contrib:'参数与数据应等比扩展（70B ↔ 1.4T token）',
+    contrib:'parameters and data should scale proportionally (70B ↔ 1.4T tokens)',
     highlights:['scaling'],
-    note:'修正 Kaplan 定律的训练配方：同期大多数模型都「数据喂少了」——直接改写此后所有旗舰模型的训练预算分配。' },
+    note:'Corrected Kaplan-era training recipes: most contemporary models were under-trained on data — directly rewriting the training-budget allocation of every subsequent flagship.' },
   { year:2022, view:'attn', name:'FlashAttention',
     paper:'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao et al.)',
-    contrib:'分块在线 softmax：精确注意力显存 O(L²)→O(L)',
+    contrib:'tiled online softmax: exact attention memory O(L²)→O(L)',
     highlights:['flash'],
-    note:'不改数学只改访存，成为全行业默认内核（v2 2023、v3 2024 持续进化）。长上下文训练由此平民化。' },
+    note:'Same math, better memory access — now the industry-default kernel (v2 2023, v3 2024 keep evolving). Long-context training became accessible to everyone.' },
   { year:2022, view:'ssm', name:'RWKV',
     paper:'RWKV: Reinventing RNNs for the Transformer Era (Peng et al.)',
-    contrib:'通道级衰减：训练并行、推理 O(1) 状态的 RNN',
+    contrib:'channel-wise decay: an RNN with parallel training and O(1) inference state',
     highlights:['lin','rwkv'],
-    note:'循环复兴的社区旗手：把注意力改写为可并行可递推的线性形式。' },
+    note:'Community standard-bearer of the RNN revival: rewriting attention as a linear form that is both parallelizable and recurrent.' },
   { year:2023, view:'dense', name:'LLaMA (the modern Dense paradigm)',
     paper:'LLaMA: Open and Efficient Foundation Language Models (Touvron et al.)',
-    contrib:'RMSNorm + RoPE + SwiGLU 三件套，开源生态引爆',
+    contrib:'The RMSNorm + RoPE + SwiGLU trio; ignited the open-source ecosystem',
     highlights:['tok','emb','rope','rms1','swiglu','lnf'],
-    note:'现代 Decoder-Only Dense 的定型：Pre-Norm/RMSNorm、旋转位置编码、门控 FFN——Qwen 等后续 Dense 模型全部沿用。' },
+    note:'The definitive modern Decoder-Only Dense: Pre-Norm/RMSNorm, rotary position embeddings, gated FFN — all later Dense models like Qwen followed.' },
   { year:2023, view:'attn', name:'GQA',
     paper:'GQA: Training Generalized Multi-Query Transformer Models (Ainslie et al.)',
-    contrib:'分组共享 KV：质量与 Cache 的甜点（LLaMA-2 70B 起标配）',
+    contrib:'grouped-shared KV: the sweet spot of quality vs cache (standard since LLaMA-2 70B)',
     highlights:['mqa','gqa'],
-    note:'MQA 与 MHA 的折中，还能从旧检查点 Uptraining 转换。Qwen2/3 全系采用。' },
+    note:'MQA-MHA compromise; also convertible from old checkpoints via uptraining. Adopted across Qwen2/3.' },
   { year:2023, view:'ssm', name:'Mamba',
     paper:'Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao)',
-    contrib:'选择机制 + 硬件感知扫描，线性复杂度比肩 Transformer',
+    contrib:'selective mechanism + hardware-aware scan; linear complexity rivaling Transformers',
     highlights:['s4','mamba'],
-    note:'SSM 高光时刻：参数随输入变化让模型「学会遗忘」；Mamba-2 (2024) 与线性注意力在 SSD 框架下统一。' },
+    note:'SSM\'s highlight: input-dependent parameters let the model learn to forget; Mamba-2 (2024) unifies with linear attention under the SSD framework.' },
   { year:2023, view:'moe', name:'Mixtral 8x7B',
     paper:'Mixtral of Experts (Jiang et al.)',
-    contrib:'开源 Top-2 稀疏 MoE：47B 总参 / 13B 激活',
+    contrib:'open-source top-2 sparse MoE: 47B total / 13B active params',
     highlights:['router','exp1','exp2','exp3','exp4','wsum'],
-    note:'MoE 走向主流开源：同等推理成本下质量直逼更大 Dense 模型——此后新旗舰多为 MoE。' },
+    note:'MoE went mainstream open source: at equal inference cost it rivals larger Dense models — most new flagships since have been MoE.' },
   { year:2023, view:'attn', name:'Mistral 7B（SWA）',
     paper:'Mistral 7B (Jiang et al.)',
-    contrib:'滑动窗口注意力：长文本推理 Cache O(L)→O(w)',
+    contrib:'sliding-window attention: long-document inference cache O(L)→O(w)',
     highlights:['swa','flash'],
-    note:'GQA+SWA 组合让 7B 小模型也能跑长文；StreamingLLM 的 attention sinks 解释了首 token 的「注意力黑洞」现象。' },
+    note:'GQA+SWA lets a 7B model handle long documents; StreamingLLM\'s attention sinks explain the first-token attention sink phenomenon.' },
   { year:2023, view:'train', name:'DPO direct preference optimization',
     paper:'Direct Preference Optimization (Rafailov et al.)',
-    contrib:'免奖励模型、免 RL 采样的偏好对齐',
+    contrib:'preference alignment without a reward model or RL sampling',
     highlights:['dpo','rlhf'],
-    note:'把 RLHF 两步折叠为一步分类式损失：开源社区的对齐门槛骤降，此后 RLHF/DPO 并存互补。' },
+    note:'Folds RLHF\'s two steps into one classification-style loss: the open-source alignment barrier dropped sharply; RLHF and DPO have coexisted complementarily ever since.' },
   { year:2024, view:'frontier', name:'TTT layers / memory layers',
     paper:'Learning to (Learn at Test Time) (Sun et al.) · Memory Layers at Scale (Meta)',
-    contrib:'隐藏状态=在线学习器；稀疏键值记忆替换 FFN',
+    contrib:'hidden state = online learner; sparse key-value memory replaces FFN',
     highlights:['ttt','memlayer'],
-    note:'两条「记忆」路线同时起步：TTT 把状态变成可学习的网络，Memory Layers 把事实知识外置成可检索参数。' },
+    note:'Two memory routes started together: TTT turns the state into a learnable network; Memory Layers externalize factual knowledge into retrievable parameters.' },
   { year:2024, view:'frontier', name:'BLT byte-level LM',
     paper:'Byte Latent Transformer: Patches Scale Better Than Tokens (Meta)',
-    contrib:'熵驱动动态 patch，去 BPE 分词器',
+    contrib:'entropy-driven dynamic patches; drops the BPE tokenizer',
     highlights:['blt'],
-    note:'计算量随信息熵分配：越难预测的字节花越多算力；等算力下鲁棒性超过 Llama 3——「分词器是否必要」的正面挑战。' },
+    note:'Compute allocated by information entropy: harder-to-predict bytes get more compute; at equal compute it outperforms Llama 3 on robustness — a direct challenge to whether tokenizers are necessary.' },
   { year:2024, view:'gen', name:'MTP multi-token prediction',
     paper:'DeepSeek-V3 Technical Report (DeepSeek-AI)',
-    contrib:'辅助头一次预测多步：训练信号更密 + 投机草稿',
+    contrib:'auxiliary heads predict several steps at once: denser training signal + speculative drafts',
     highlights:['autoreg','mtp'],
-    note:'多基准 +1.5~3%；推理时 MTP 头直接当 EAGLE 式草稿模型——训练目标与推理加速一鱼两吃。' },
+    note:'+1.5~3% on multiple benchmarks; at inference MTP heads serve directly as EAGLE-style draft models — one objective serving both training and inference speedup.' },
   { year:2024, view:'attn', name:'DeepSeek-V2/V3（MLA）',
     paper:'DeepSeek-V2 / DeepSeek-V3 Technical Report (DeepSeek-AI)',
-    contrib:'MLA 潜在压缩 KV Cache 数十倍 + MoE 671B/37B 激活',
+    contrib:'MLA compresses KV cache tens of times + MoE 671B/37B active params',
     highlights:['gqa','mla','flash'],
-    note:'KV 压缩线的当前终点：Cache 只存低秩潜在向量；V3 再加无辅助损失均衡与 MTP 训练目标。' },
+    note:'Current endpoint of the KV-compression line: cache stores only low-rank latent vectors; V3 adds auxiliary-loss-free balancing and the MTP training objective.' },
   { year:2024, view:'ssm', name:'xLSTM / Mamba-2',
     paper:'xLSTM: Extended Long Short-Term Memory (Beck et al.) · Transformers are SSMs (Dao & Gu)',
-    contrib:'指数门控矩阵记忆；SSM 与注意力统一为 SSD',
+    contrib:'exponentially gated matrix memory; SSM and attention unified as SSD',
     highlights:['xlstm','mamba'],
-    note:'LSTM 原作者 27 年后的回应；理论层面线性注意力与 SSM 合流——「混合架构」时代开启。' },
+    note:'The LSTM originators\' answer 27 years later; theoretically, linear attention and SSMs converge — the hybrid-architecture era begins.' },
   { year:2025, view:'gen', name:'Diffusion language models',
     paper:'LLaDA: Large Language Diffusion Models · Mercury / Gemini Diffusion (Inception Labs)',
-    contrib:'并行去噪生成，正面挑战自回归范式',
+    contrib:'parallel denoising generation directly challenges the autoregressive paradigm',
     highlights:['diffusion','autoreg','spec'],
-    note:'LLaDA 8B 首次验证扩散 LM 规模法则；Mercury 主打 5-10× 生成速度——2017 年以来Generation paradigms的第一次真正分叉。' },
+    note:'LLaDA 8B first validated diffusion LM scaling laws; Mercury focuses on 5-10x generation speed — the first real fork in generation paradigms since 2017.' },
   { year:2025, view:'attn', name:'Gemma 3 (stabilization)',
     paper:'Gemma 3 Technical Report (Google)',
-    contrib:'QK-Norm + 门控注意力 + 5:1 局部/全局 + 多模态',
+    contrib:'QK-Norm + gated attention + 5:1 local/global + multimodal',
     highlights:['qknorm','swa'],
-    note:'训练稳定化三件套（QK-Norm/soft-cap/z-loss）成为百B级训练的隐形基石——不改变数学，只保证「训得动」。' },
+    note:'The stabilization trio (QK-Norm/soft-cap/z-loss) became the invisible foundation of 100B-scale training — changing no math, just ensuring trainability.' },
   { year:2025, view:'train', name:'DeepSeek-R1 (verifiable-reward RL)',
     paper:'DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via RL (DeepSeek-AI)',
-    contrib:'纯 RL（GRPO）自发涌现长思维链与反思',
+    contrib:'pure RL (GRPO) spontaneously emerges long chains of thought and reflection',
     highlights:['rlvr','rlhf','dpo'],
-    note:'「会推理」第一次被证明可以从可验证奖励的强化学习中长出来，而非只靠监督示范——训练范式的新分水岭。' },
+    note:'Reasoning was shown for the first time to grow from RL with verifiable rewards rather than supervised demonstrations alone — a new watershed in training paradigms.' },
   { year:2025, view:'frontier', name:'Titans / latent reasoning',
     paper:'Titans: Learning to Memorize at Test Time (Google) · Reasoning by Latent Space (Huginnet)',
-    contrib:'测试时神经记忆；深度循环潜推理',
+    contrib:'test-time neural memory; deep-looping latent reasoning',
     highlights:['titans','looped','ttt'],
-    note:'「思考」从输出 token 转移到架构内部：记忆在测试时继续学习、深度按难度自适应——与 o1 式长思维链互补的两条路。' },
+    note:'Thinking moves from output tokens into the architecture: memory keeps learning at test time and depth adapts to difficulty — two routes complementary to o1-style long chains of thought.' },
   { year:2025, view:'moe', name:'Qwen3 / Kimi K2',
     paper:'Qwen3 Technical Report (Alibaba) · Kimi K2: Open Agentic Intelligence (Moonshot AI)',
-    contrib:'细粒度 MoE 成主流：Qwen3-235B-A22B（128 选 8）；K2 1T 总参 / 32B 激活（MLA）',
+    contrib:'Fine-grained MoE goes mainstream: Qwen3-235B-A22B (128 choose 8); K2 1T total / 32B active (MLA)',
     highlights:['gqa','router','exp1','exp4'],
-    note:'当前开源旗舰的两种答案：Qwen3 同款双模式（思考/非思考）；K2 用 MoE+MLA 把激活参数压到 3%。' },
+    note:'Two answers from current open-source flagships: Qwen3-style dual modes (thinking/non-thinking); K2 compresses active params to 3% via MoE+MLA.' },
   { year:2025, view:'attn', name:'NSA / MoBA sparse attention',
     paper:'Native Sparse Attention (DeepSeek-AI) · MoBA: Mixture of Block Attention (Moonshot AI)',
-    contrib:'可训练的块稀疏注意力，长上下文成本近线性',
+    contrib:'trainable block-sparse attention; near-linear long-context cost',
     highlights:['flash','sparse','linear'],
-    note:'精确注意力的下一站：只算重要块且稀疏模式进预训练——DeepSeek 与 Moonshot 同月交出答卷。' },
+    note:'The next stop for exact attention: compute only important blocks with sparsity baked into pre-training — DeepSeek and Moonshot delivered in the same month.' },
   { year:2025, view:'ssm', name:'Kimi Linear（KDA）',
     paper:'Kimi Linear: An Expressive, Efficient Attention Architecture (Moonshot AI)',
-    contrib:'门控线性注意力 3/4 层 + MLA 1/4 层混合，百万级上下文',
+    contrib:'gated linear attention in 3/4 of layers + MLA in 1/4; million-token context',
     highlights:['kda','lin','mamba','mla'],
-    note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' },
+    note:'The flagship hybrid: linear layers for efficiency, full attention for precise retrieval — where the RNN-revival and attention-evolution lines converge.' },
   { year:2026, view:'attn', name:'DeepSeek V4（CSA + mHC）',
     paper:'DeepSeek-V4 Technical Report (DeepSeek-AI)',
-    contrib:'压缩稀疏注意力：1M 上下文 KV Cache 降至 V3.2 约 10%',
+    contrib:'compressed sparse attention: 1M-context KV cache down to ~10% of V3.2\'s',
     highlights:['sparse','mla','flash'],
-    note:'1.6T 总参/49B 激活（MIT 开源）+ mHC 超连接改进残差通路；三档推理模式把「思考深度」做成 API 参数。' },
+    note:'1.6T total / 49B active params (MIT open source) + mHC hyper-connections improving residual pathways; three inference modes turn thinking depth into an API parameter.' },
   { year:2026, view:'ssm', name:'Kimi K3 (2.8T full-stack overhaul)',
     paper:'Kimi K3: Open Frontier Intelligence (Moonshot AI)',
-    contrib:'KDA+MLA 混合 · LatentMoE · Attention Residuals · 全栈 NoPE',
+    contrib:'KDA+MLA hybrid · LatentMoE · Attention Residuals · full-stack NoPE',
     highlights:['kda','mla','lin'],
-    note:'首个开源 3T 级模型（896 专家选 16）+ 首个全 NoPE 前沿模型 + 原生多模态——Kimi Linear 论文的 2.8T 生产化。' },
+    note:'First open-source 3T-class model (896 experts choose 16) + first all-NoPE frontier model + native multimodal — the 2.8T productionization of the Kimi Linear paper.' },
   { year:2026, view:'attn', name:'The inference-efficiency arms race',
-    paper:'DeepSeek V4 · Kimi K3 · Nemotron 3 · Qwen3.8（2026 开源旗舰潮）',
-    contrib:'组件级效率替换：MoE→LatentMoE、注意力→MLA+线性混合、RoPE→NoPE',
+    paper:'DeepSeek V4 · Kimi K3 · Nemotron 3 · Qwen3.8 (the 2026 open-source flagship wave)',
+    contrib:'component-level efficiency swaps: MoE→LatentMoE, attention→MLA+linear hybrid, RoPE→NoPE',
     highlights:['flash','mla','sparse','linear'],
-    note:'2026 主线不再是「堆参数」而是「每个组件都换成推理效率调优版」：发布周期压缩至 6-8 周，前沿能力全面开源（MIT/Apache）。' },
+    note:'The 2026 mainstream is no longer stacking parameters but swapping every component for an inference-efficiency-tuned version: release cycles compressed to 6-8 weeks, frontier capabilities fully open-sourced (MIT/Apache).' },
   { year:2025, view:'frontier', name:'Energy-Based Transformers',
     paper:'Energy-Based Transformers are Scalable Learners (2025)',
-    contrib:'能量函数 + 测试时能量下降做隐式推理',
+    contrib:'energy function + test-time energy descent for implicit reasoning',
     highlights:['ebt','ttt'],
-    note:'把「深思」做进架构：推理 = 能量最小化迭代。与 TTT/Titans 同属测试时计算路线的最新分支，结论尚待大规模验证。' }
+    note:'Building deliberation into architecture: reasoning = iterative energy minimization. The newest branch of the test-time-compute line alongside TTT/Titans; conclusions still await large-scale validation.' }
 ];
 
 
