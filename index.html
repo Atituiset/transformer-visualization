@@ -4,7 +4,7 @@
   Transformer 架构演进交互式可视化学习应用
   作者：atituiset
   日期：2026-08-24
-  版本：v2.1.0
+  版本：v2.2.0
   说明：单文件纯前端应用。六大架构视图（前史 RNN→2017 / 原版
         Enc-Dec / Decoder-Only Dense / MoE / Attention 演进 / SSM）
         + 1990→2025 论文线时间轴。TensorFlow.js 完成前向推理模拟，
@@ -339,7 +339,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
 <header id="topbar">
   <h1>Transformer 架构演进交互式可视化</h1>
-  <span id="version-tag">v2.1.0</span>
+  <span id="version-tag">v2.2.0</span>
   <span class="spacer"></span>
   <button id="theme-toggle" class="btn" title="切换深浅主题">🌙 深色模式</button>
 </header>
@@ -1447,7 +1447,8 @@ const MODULE_DETAILS = {
     params: '0（固定旋转，无可训练参数）',
     refs: ['Su et al. 2021 · RoFormer: Enhanced Transformer with Rotary Position Embedding',
            'Press et al. 2022 · ALiBi (Train Short, Test Long)',
-           'Peng et al. 2024 · YaRN (上下文扩展)']
+           'Peng et al. 2024 · YaRN (上下文扩展)',
+           'Moonshot AI 2026 · Kimi K3（首个全栈 NoPE 前沿模型：位置由因果掩码+KDA 状态隐式携带）']
   },
   'rmsnorm': {
     title: 'RMSNorm（2019）+ Pre-Norm',
@@ -2085,6 +2086,30 @@ const MODULE_DETAILS = {
     code: "let y = initGuess(x);\nfor (let k = 0; k < K; k++)\n  y = y.sub(gradY(x, y).mul(eta));   // 能量下降\nreturn y;",
     params: '能量网络 E_θ',
     refs: ['Khona et al. 2025 · Energy-Based Transformers are Scalable Learners']
+  },
+  'v4': {
+    title: 'DeepSeek V4：CSA 稀疏注意力 + mHC（2026.4）',
+    desc: 'V4-Pro 1.6T 总参/49B 激活（MIT 协议开源），1M 上下文。两大架构更新：①CSA 压缩稀疏注意力 + HCA，把 1M 上下文的 KV Cache 压到 V3.2 的约 10%；②mHC（流形约束超连接）把残差通路加宽并施加流形约束，改进深层信息流。三档推理模式（Non-Think / Think High / Think Max）把「思考深度」做成 API 参数。',
+    latex: [
+      '\\text{CSA：KV Cache}(1M)\\approx 10\\%\\times V3.2',
+      'mHC:\\text{ 残差通路加宽 + 流形约束}'
+    ],
+    shapes: ['1.6T 总参 / 49B 激活（MoE）','上下文 1M'],
+    code: "// API 层切换思考深度\nconst out = v4(prompt, { think: 'high' });",
+    params: '1.6T 总参 / 49B 激活',
+    refs: ['DeepSeek-AI 2026 · DeepSeek-V4 Technical Report']
+  },
+  'k3': {
+    title: 'Kimi K3：全栈组件替换（2026.7）',
+    desc: '首个开源 3T 级模型（2.8T 参数、896 专家选 16、原生视觉、1M 上下文）。Kimi Linear 论文的 2.8T 生产化，全栈组件为推理效率调优：KDA+门控 MLA 混合注意力（69+24 层）、LatentMoE（路由前降维压缩通信）、Attention Residuals（跨层残差按注意力权重加权）、全栈 NoPE——首个彻底去掉 RoPE 的前沿模型，位置信息由因果掩码与 KDA 状态隐式携带。',
+    latex: [
+      '\\text{K3}=69\\times\\text{KDA}+24\\times\\text{门控MLA}+\\text{LatentMoE}(896\\text{选}16)+\\text{AttnRes}+\\text{NoPE}'
+    ],
+    shapes: ['2.8T 总参 / ~32B 级激活（1.8%）','原生多模态 · 1M 上下文'],
+    code: "// 2026 主线：组件级替换（推理效率调优）\nMoE       → LatentMoE;\nAttention → MLA + KDA 线性混合;\nResidual  → Attention Residuals;\nRoPE      → NoPE;",
+    params: '2.8T 总参 / ~32B 激活',
+    refs: ['Moonshot AI 2026 · Kimi K3: Open Frontier Intelligence',
+           'Raschka 2026 · Kimi K3 Architecture Notes']
   }
 };
 
@@ -2804,7 +2829,7 @@ const ERAS = [
     meaning:'数据、算法、算力三驾马车，深度学习进入黄金时代' },
   { from:2017, to:2022, label:'第三阶段 · Transformer 时代（2017-2022）',
     meaning:'模型规模爆发，Transformer 成为通用基础架构' },
-  { from:2023, to:2100, label:'第四阶段 · 后 Transformer 探索（2023-2025）',
+  { from:2023, to:2100, label:'第四阶段 · 后 Transformer 探索（2023-2026）',
     meaning:'追求高效率、长上下文、低成本，迈向通用智能' }
 ];
 
@@ -3082,6 +3107,21 @@ const HISTORY = [
     contrib:'门控线性注意力 3/4 层 + MLA 1/4 层混合，百万级上下文',
     highlights:['kda','lin','mamba','mla'],
     note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' },
+  { year:2026, view:'attn', name:'DeepSeek V4（CSA + mHC）',
+    paper:'DeepSeek-V4 Technical Report (DeepSeek-AI)',
+    contrib:'压缩稀疏注意力：1M 上下文 KV Cache 降至 V3.2 约 10%',
+    highlights:['sparse','mla','flash'],
+    note:'1.6T 总参/49B 激活（MIT 开源）+ mHC 超连接改进残差通路；三档推理模式把「思考深度」做成 API 参数。' },
+  { year:2026, view:'ssm', name:'Kimi K3（2.8T 全栈革新）',
+    paper:'Kimi K3: Open Frontier Intelligence (Moonshot AI)',
+    contrib:'KDA+MLA 混合 · LatentMoE · Attention Residuals · 全栈 NoPE',
+    highlights:['kda','mla','lin'],
+    note:'首个开源 3T 级模型（896 专家选 16）+ 首个全 NoPE 前沿模型 + 原生多模态——Kimi Linear 论文的 2.8T 生产化。' },
+  { year:2026, view:'attn', name:'推理效率军备竞赛',
+    paper:'DeepSeek V4 · Kimi K3 · Nemotron 3 · Qwen3.8（2026 开源旗舰潮）',
+    contrib:'组件级效率替换：MoE→LatentMoE、注意力→MLA+线性混合、RoPE→NoPE',
+    highlights:['flash','mla','sparse','linear'],
+    note:'2026 主线不再是「堆参数」而是「每个组件都换成推理效率调优版」：发布周期压缩至 6-8 周，前沿能力全面开源（MIT/Apache）。' },
   { year:2025, view:'frontier', name:'Energy-Based Transformers',
     paper:'Energy-Based Transformers are Scalable Learners (2025)',
     contrib:'能量函数 + 测试时能量下降做隐式推理',
@@ -3117,6 +3157,10 @@ const Timeline = {
       li.addEventListener('click', () => this.select(h));
       ol.appendChild(li);
     });
+    const f = document.createElement('li');
+    f.className = 'tl-era tl-future';
+    f.innerHTML = '<b>未来展望</b><small>下一代模型来自多方向融合突破，深度学习持续进化，通向通用智能</small>';
+    ol.appendChild(f);
   },
   /**
    * 选中条目：切换到对应架构视图 → 高亮节点 → 显示注释。
