@@ -3192,9 +3192,11 @@ const DecoderDemo = {
           label: '第 ' + (s + 1) + ' 步 · ' + label,
           shape: key ? fmtShape(shapeOf(collect[key])) : '[1, 1, ' + window.Vocab.length + ']',
           stats: key ? statsOf(collect[key]) : null,
-          note: si === 0 ? '热力图=掩码自注意力'
-              : si === 2 ? '热力图=交叉注意力（Q←解码器，K/V←编码器）'
-              : si === 6 ? '选中「' + window.Vocab[next] + '」作为下一步输入' : null });
+          note: si === 0 ? '热力图=末层掩码自注意力（行=已生成前缀）'
+              : si === 2 ? '热力图=末层交叉注意力（Q←解码器，K/V←编码器）'
+              : si === 6 ? '选中「' + window.Vocab[next] + '」作为下一步输入'
+              : si === 1 ? '子步快照取自末层解码层（第 ' + Config.num_layers + ' 层）'
+              : null });
       });
       target.push(next);
       generated.push(window.Vocab[next]);
@@ -3541,8 +3543,12 @@ const MoEDemo = {
         order.forEach(e => load[e]++);
       }));
       log.insertAdjacentHTML('beforeend',
-        '<li><span class="log-step">LM Head（权重绑定）· 专家负载：</span>' +
-        load.map((v, i) => 'E' + (i + 1) + '×' + v).join(' · ') +
+        '<li class="current"><span class="log-step">LM Head（权重绑定）· 预测下一词</span>' +
+        TopKChart.render(s.top5) +
+        '<span class="log-meta">Top-1「<b>' + s.top5[0].token + '</b>」 p=' +
+        s.top5[0].prob.toFixed(3) + '（随机权重仅展示机制）</span>' +
+        '<span class="log-step" style="display:block;margin-top:6px;">全层专家负载：</span>' +
+        load.map((v, i) => '<span class="chip">E' + (i + 1) + '×' + v + '</span>').join('') +
         '<span class="log-meta">负载不均时需均衡损失/偏置调节（Switch → DeepSeek-V3 演进）</span></li>');
       return;
     }
