@@ -766,7 +766,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     <div id="param-summary" style="margin-top:10px;font-size:13px;line-height:1.7;"></div>
 
     <ol id="step-log"></ol>
-    <div id="log-hint" data-i18n="hintBar">💡 运行后停在第 1 步：⏭ 单步前进 · ▶ 自动播放 · 点击日志步骤可跳转</div>
+    <div id="log-hint" data-i18n="hintBar">💡 运行后自动播放；⏸ 随时暂停 · ⏭ 单步前进 · 点击日志步骤可跳转</div>
 
     <div id="tensor-tracker"><b data-i18n="tensorNow">当前张量</b><br><span data-i18n="tensorWaiting">待运行…</span></div>
 
@@ -2596,12 +2596,13 @@ const StepPlayer = {
     });
     this.setPlayBtn(true);
   },
-  /** 运行后默认停在第 1 步（保证单步始终可用） */
-  startPaused(){
+  /** 运行后自动播放：先应用第 1 步保证画面就绪，随即从第 2 步连续推进 */
+  runAuto(){
     if(!this.steps.length) return;
     DataFlowAnimator.stop(); this.setPlayBtn(false);
     this.cursor = -1;
     this._set(0);
+    this.start();
   },
   /** 单步前进；末尾再按则从头重新单步 */
   next(){
@@ -3136,7 +3137,7 @@ const DecoderDemo = {
       });
       li.lastElementChild.scrollIntoView({ block:'nearest' });
     }, () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   }
 };
 
@@ -3195,7 +3196,7 @@ const DenseDemo = {
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self', q: collect.q, kv: collect.kv });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s), () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   },
 
   /** Dense 视图：KV Cache 增量生成——Prefill 整段一次写缓存，此后每步只前向 1 个新 token */
@@ -3266,7 +3267,7 @@ const DenseDemo = {
     this._genData = data;
 
     StepPlayer.arm(steps, (s) => this._applyGen(s), () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   },
 
   _apply(s){
@@ -3416,7 +3417,7 @@ const MoEDemo = {
     AttentionHeatmap.setData({ tokens, layers: collect.attn, kind: 'self', q: collect.q, kv: collect.kv });
     AttentionHeatmap.setLayer(collect.attn.length - 1);
     StepPlayer.arm(steps, (s) => this._apply(s, tokens), () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   },
 
   _apply(s, srcTokens){
@@ -3558,7 +3559,7 @@ const MoEDemo = {
 
     StepPlayer.arm(steps, (st) => this._applyGen(st),
       () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   },
 
   _applyGen(s){
@@ -3843,7 +3844,7 @@ const App = {
     AttentionHeatmap.setLayer(result.attnLayers.length - 1);
     StepPlayer.arm(result.steps, (s, idx) => this._applyStep(s, idx),
       () => ArchitectureRenderer.clearHighlight());
-    StepPlayer.startPaused();
+    StepPlayer.runAuto();
   },
   /** 单步应用：高亮模块 + 追加日志 + 更新张量追踪器 */
   _applyStep(s, idx){
