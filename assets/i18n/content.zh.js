@@ -1577,6 +1577,11 @@ const HISTORY = [
     contrib:'门控线性注意力 3/4 层 + MLA 1/4 层混合，百万级上下文',
     highlights:['kda','lin','mamba','mla'],
     note:'混合架构的代表作：线性层管效率、全注意力管精确检索——「循环复兴」与「注意力演进」两条线的合流点。' },
+  { year:2025, view:'frontier', name:'Energy-Based Transformers',
+    paper:'Energy-Based Transformers are Scalable Learners (2025)',
+    contrib:'能量函数 + 测试时能量下降做隐式推理',
+    highlights:['ebt','ttt'],
+    note:'把「深思」做进架构：推理 = 能量最小化迭代。与 TTT/Titans 同属测试时计算路线的最新分支，结论尚待大规模验证。' },
   { year:2026, view:'attn', name:'DeepSeek V4（CSA + mHC）',
     paper:'DeepSeek-V4 Technical Report (DeepSeek-AI)',
     contrib:'压缩稀疏注意力：1M 上下文 KV Cache 降至 V3.2 约 10%',
@@ -1591,12 +1596,7 @@ const HISTORY = [
     paper:'DeepSeek V4 · Kimi K3 · Nemotron 3 · Qwen3.8（2026 开源旗舰潮）',
     contrib:'组件级效率替换：MoE→LatentMoE、注意力→MLA+线性混合、RoPE→NoPE',
     highlights:['flash','mla','sparse','linear'],
-    note:'2026 主线不再是「堆参数」而是「每个组件都换成推理效率调优版」：发布周期压缩至 6-8 周，前沿能力全面开源（MIT/Apache）。' },
-  { year:2025, view:'frontier', name:'Energy-Based Transformers',
-    paper:'Energy-Based Transformers are Scalable Learners (2025)',
-    contrib:'能量函数 + 测试时能量下降做隐式推理',
-    highlights:['ebt','ttt'],
-    note:'把「深思」做进架构：推理 = 能量最小化迭代。与 TTT/Titans 同属测试时计算路线的最新分支，结论尚待大规模验证。' }
+    note:'2026 主线不再是「堆参数」而是「每个组件都换成推理效率调优版」：发布周期压缩至 6-8 周，前沿能力全面开源（MIT/Apache）。' }
 ];
 
 

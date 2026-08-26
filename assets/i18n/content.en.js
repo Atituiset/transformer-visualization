@@ -1577,6 +1577,11 @@ const HISTORY = [
     contrib:'gated linear attention in 3/4 of layers + MLA in 1/4; million-token context',
     highlights:['kda','lin','mamba','mla'],
     note:'The flagship hybrid: linear layers for efficiency, full attention for precise retrieval — where the RNN-revival and attention-evolution lines converge.' },
+  { year:2025, view:'frontier', name:'Energy-Based Transformers',
+    paper:'Energy-Based Transformers are Scalable Learners (2025)',
+    contrib:'energy function + test-time energy descent for implicit reasoning',
+    highlights:['ebt','ttt'],
+    note:'Building deliberation into architecture: reasoning = iterative energy minimization. The newest branch of the test-time-compute line alongside TTT/Titans; conclusions still await large-scale validation.' },
   { year:2026, view:'attn', name:'DeepSeek V4（CSA + mHC）',
     paper:'DeepSeek-V4 Technical Report (DeepSeek-AI)',
     contrib:'compressed sparse attention: 1M-context KV cache down to ~10% of V3.2\'s',
@@ -1591,12 +1596,7 @@ const HISTORY = [
     paper:'DeepSeek V4 · Kimi K3 · Nemotron 3 · Qwen3.8 (the 2026 open-source flagship wave)',
     contrib:'component-level efficiency swaps: MoE→LatentMoE, attention→MLA+linear hybrid, RoPE→NoPE',
     highlights:['flash','mla','sparse','linear'],
-    note:'The 2026 mainstream is no longer stacking parameters but swapping every component for an inference-efficiency-tuned version: release cycles compressed to 6-8 weeks, frontier capabilities fully open-sourced (MIT/Apache).' },
-  { year:2025, view:'frontier', name:'Energy-Based Transformers',
-    paper:'Energy-Based Transformers are Scalable Learners (2025)',
-    contrib:'energy function + test-time energy descent for implicit reasoning',
-    highlights:['ebt','ttt'],
-    note:'Building deliberation into architecture: reasoning = iterative energy minimization. The newest branch of the test-time-compute line alongside TTT/Titans; conclusions still await large-scale validation.' }
+    note:'The 2026 mainstream is no longer stacking parameters but swapping every component for an inference-efficiency-tuned version: release cycles compressed to 6-8 weeks, frontier capabilities fully open-sourced (MIT/Apache).' }
 ];
 
 
