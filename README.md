@@ -1,7 +1,7 @@
 # Transformer 架构演进交互式可视化
 
 [![Deploy to GitHub Pages](https://github.com/Atituiset/transformer-visualization/actions/workflows/deploy.yml/badge.svg)](https://github.com/Atituiset/transformer-visualization/actions/workflows/deploy.yml)
-![Version](https://img.shields.io/badge/version-v2.3.0-blue)
+![Version](https://img.shields.io/badge/version-v2.4.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 > 从 1943 年 MP 神经元到 2026 推理效率竞赛——在浏览器里完整走一遍深度学习与大模型的进化之路。

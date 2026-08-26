@@ -3,12 +3,14 @@
   ============================================================
   Transformer 架构演进交互式可视化学习应用
   作者：atituiset
-  日期：2026-08-24
-  版本：v2.3.0
-  说明：单文件纯前端应用。六大架构视图（前史 RNN→2017 / 原版
-        Enc-Dec / Decoder-Only Dense / MoE / Attention 演进 / SSM）
-        + 1990→2025 论文线时间轴。TensorFlow.js 完成前向推理模拟，
-        D3.js 绘制架构图与注意力热力图，KaTeX 渲染公式。
+  日期：2026-08-26
+  版本：v2.4.0
+  说明：单文件纯前端应用。10 大架构视图（前传·基石 1943-2016 /
+        前史 RNN→2017 / 2017 原版 Enc-Dec / Decoder-Only Dense / MoE /
+        Attention 演进 / 线性·SSM / 生成范式 / 前沿探索 / 训练·对齐）
+        + 1943→2026 共 58 篇里程碑论文线时间轴。TensorFlow.js 完成
+        前向推理模拟（CPU 后端），D3.js 绘制架构图与注意力热力图，
+        KaTeX 渲染公式。
   ============================================================
 -->
 <html lang="zh-CN" data-theme="dark">
@@ -18,16 +20,19 @@
 <title>Transformer 架构演进交互式可视化 / Transformer Evolution Visualization</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231a237e"/><text x="16" y="22" font-size="16" text-anchor="middle" fill="%23ff6f00" font-family="sans-serif" font-weight="bold">T</text></svg>'>
 <meta name="description" content="从 1943 年 MP 神经元到 2026 推理效率竞赛：Transformer 架构演进交互式学习应用。10 大架构视图、58 篇里程碑论文、真实 TensorFlow.js 前向传播与单步调试——在浏览器里完整走一遍大模型的进化之路。">
-<meta name="theme-color" content="#1a237e">
+<meta name="theme-color" content="#070b16">
+<link rel="canonical" href="https://atituiset.github.io/transformer-visualization/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Transformer 架构演进交互式可视化">
 <meta property="og:title" content="Transformer 架构演进交互式可视化（1943→2026）">
 <meta property="og:description" content="深度学习/LLM 架构演进全谱系：10 大视图 · 58 篇里程碑论文 · 真实 tfjs 前向传播 + 单步调试 + 抽屉公式解释。">
 <meta property="og:url" content="https://atituiset.github.io/transformer-visualization/">
 <meta property="og:image" content="https://atituiset.github.io/transformer-visualization/og-image.png">
+<meta property="og:image:alt" content="Transformer 架构演进交互式可视化应用截图：左侧时间轴、中间架构图、右侧数据流演示">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Transformer 架构演进交互式可视化（1943→2026）">
 <meta name="twitter:description" content="深度学习/LLM 架构演进全谱系：10 视图 · 58 论文节点 · 真实 tfjs 前向传播。">
@@ -43,7 +48,7 @@
 :root{
   --c-primary:#1a237e;
   --c-primary-light:#3949ab;
-  --c-accent:#ff6f00;
+  --c-accent:#b54f00;   /* 白底/白字对比 5.1:1（旧 #ff6f00 仅 2.8:1，小字不达标）；暗色主题另行覆盖 */
   --c-bg:#f5f7fa;
   --c-card:#ffffff;
   --c-text:#1c2430;
@@ -147,6 +152,9 @@ html[data-theme="dark"] .chip{
   border:1px solid rgba(0,229,255,.35);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
+/* 键盘焦点可见性（a11y）：Tab 导航时清晰指示，配色随主题变量 */
+:focus-visible{outline:2px solid var(--c-primary);outline-offset:2px;border-radius:4px;}
+html[data-theme="dark"] :focus-visible{outline-color:var(--c-accent);}
 html,body{height:100%;}
 body{
   font-family:var(--font-main);
@@ -159,7 +167,8 @@ body{
 
 /* ---------- 顶栏 ---------- */
 #topbar{
-  display:flex;align-items:center;gap:12px;
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  flex-shrink:0;   /* body 是 100vh flex 列：换行增高时不得被压缩，否则内容溢出遮挡主区 */
   padding:10px 18px;min-height:52px;
   background:linear-gradient(90deg,var(--c-primary),var(--c-primary-light));
   color:#fff;
@@ -434,7 +443,8 @@ html[data-theme="dark"] #drawer-title{color:var(--c-primary-light);}
 html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-primary-light);}
 /* 底部居中悬浮控制台：运行组 + 步进组 */
 #dock{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
-  display:flex;gap:10px;align-items:center;z-index:150;
+  display:flex;gap:10px;align-items:center;justify-content:center;z-index:150;
+  flex-wrap:wrap;max-width:96vw;
   background:var(--c-card);border:1px solid var(--c-border);border-radius:999px;
   padding:8px 14px;box-shadow:0 6px 24px rgba(15,20,50,.22);}
 .dock-group{display:flex;gap:6px;align-items:center;}
@@ -484,8 +494,16 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   #topbar h1{font-size:16px;}
 }
 @media (max-width:1024px){
-  #layout{grid-template-columns:1fr;}
+  /* minmax(0,1fr)：允许网格轨道缩到内容 min-content 以下，防窄屏横向溢出 */
+  #layout{grid-template-columns:minmax(0,1fr);}
   #panel-timeline,#panel-flow{max-height:none;}
+  /* 图表区改单列；PE 波形 SVG（固定 300px 宽）随容器收缩 */
+  #chart-area{grid-template-columns:1fr;}
+  #pe-wave svg{max-width:100%;height:auto;}
+  /* 10 个视图按钮的分段控件允许换行（单行 min-content 约 1000px，手机必溢出） */
+  #view-seg{flex-wrap:wrap;overflow:visible;}
+  /* 低端机滚动开销：窄屏去掉玻璃拟态模糊 */
+  html[data-theme="dark"] .panel{backdrop-filter:none;}
 }
 </style>
 </head>
@@ -493,11 +511,11 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
 
 <header id="topbar">
   <h1 data-i18n="title">Transformer 架构演进交互式可视化</h1>
-  <span id="version-tag">v2.3.0</span>
+  <span id="version-tag">v2.4.0</span>
   <span class="spacer"></span>
   <button id="lang-toggle" class="btn" title="切换语言 / Switch language">🌐 EN</button>
   <button id="help-toggle" class="btn" data-i18n="helpBtn" data-i18n-title="helpTip" title="功能说明：这个页面是什么、怎么用">❓ 功能说明</button>
-  <button id="theme-toggle" class="btn" title="切换深浅主题"><span data-i18n="themeDark">🌙 深色模式</span></button>
+  <button id="theme-toggle" class="btn" data-i18n-title="themeTip" title="切换深浅主题"><span data-i18n="themeDark">🌙 深色模式</span></button>
 </header>
 
 <main id="layout">
@@ -515,19 +533,19 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       <div class="arch-toolbar">
         <h3><span data-i18n="panelArchH2">模型结构 </span><span style="font-weight:400;font-size:12px;" data-i18n="panelArchSub">（悬停查看说明 · 点击查看详情）</span></h3>
         <span class="seg" id="view-seg">
-          <button data-view="dawn" data-i18n="view-dawn" title="1943-2016：神经元→感知机→反向传播→深度学习复兴">前传·基石</button>
-          <button data-view="pre" data-i18n="view-pre" title="1990→2017：RNN/LSTM/Seq2Seq/Attention 如何一步步演进到 Transformer">前史 RNN→2017</button>
-          <button data-view="orig" class="on" data-i18n="view-orig" title="2017 原版 Encoder-Decoder">2017 原版</button>
-          <button data-view="dense" data-i18n="view-dense" title="GPT → LLaMA → Qwen-Dense：现代 Decoder-Only Dense">Decoder-Only·Dense</button>
-          <button data-view="moe" data-i18n="view-moe" title="Switch → Mixtral → DeepSeek-V3 → Qwen3 → Kimi K2">Decoder-Only·MoE</button>
-          <button data-view="attn" data-i18n="view-attn" title="MHA→MQA→GQA→MLA；Flash→NSA/MoBA→线性→混合；SWA/YaRN/QK-Norm">Attention 演进</button>
-          <button data-view="ssm" data-i18n="view-ssm" title="线性注意力与状态空间：Linear Transformer→RWKV/xLSTM→S4→Mamba→Kimi Linear">线性·SSM</button>
-          <button data-view="gen" data-i18n="view-gen" title="自回归 vs MTP vs 扩散 LM vs 投机解码">生成范式</button>
-          <button data-view="frontier" data-i18n="view-frontier" title="BLT 字节级 / 记忆层 / TTT·Titans / 深度循环 / 多模态">前沿探索</button>
-          <button data-view="train" data-i18n="view-train" title="预训练→SFT→RLHF/DPO/可验证奖励 RL + 缩放定律">训练·对齐</button>
+          <button data-view="dawn" data-i18n="view-dawn" data-i18n-title="viewTip-dawn" title="1943-2016：神经元→感知机→反向传播→深度学习复兴">前传·基石</button>
+          <button data-view="pre" data-i18n="view-pre" data-i18n-title="viewTip-pre" title="1990→2017：RNN/LSTM/Seq2Seq/Attention 如何一步步演进到 Transformer">前史 RNN→2017</button>
+          <button data-view="orig" class="on" data-i18n="view-orig" data-i18n-title="viewTip-orig" title="2017 原版 Encoder-Decoder">2017 原版</button>
+          <button data-view="dense" data-i18n="view-dense" data-i18n-title="viewTip-dense" title="GPT → LLaMA → Qwen-Dense：现代 Decoder-Only Dense">Decoder-Only·Dense</button>
+          <button data-view="moe" data-i18n="view-moe" data-i18n-title="viewTip-moe" title="Switch → Mixtral → DeepSeek-V3 → Qwen3 → Kimi K2">Decoder-Only·MoE</button>
+          <button data-view="attn" data-i18n="view-attn" data-i18n-title="viewTip-attn" title="MHA→MQA→GQA→MLA；Flash→NSA/MoBA→线性→混合；SWA/YaRN/QK-Norm">Attention 演进</button>
+          <button data-view="ssm" data-i18n="view-ssm" data-i18n-title="viewTip-ssm" title="线性注意力与状态空间：Linear Transformer→RWKV/xLSTM→S4→Mamba→Kimi Linear">线性·SSM</button>
+          <button data-view="gen" data-i18n="view-gen" data-i18n-title="viewTip-gen" title="自回归 vs MTP vs 扩散 LM vs 投机解码">生成范式</button>
+          <button data-view="frontier" data-i18n="view-frontier" data-i18n-title="viewTip-frontier" title="BLT 字节级 / 记忆层 / TTT·Titans / 深度循环 / 多模态">前沿探索</button>
+          <button data-view="train" data-i18n="view-train" data-i18n-title="viewTip-train" title="预训练→SFT→RLHF/DPO/可验证奖励 RL + 缩放定律">训练·对齐</button>
         </span>
       </div>
-      <svg id="arch-svg" role="img" aria-label="Transformer 架构演进结构图"></svg>
+      <svg id="arch-svg" role="img" data-i18n-aria="archSvgAria" aria-label="Transformer 架构演进结构图"></svg>
       <div class="arch-tooltip" id="arch-tooltip"></div>
     </div>
 
@@ -551,37 +569,37 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
           </span>
           <select id="layer-select" style="display:none;width:auto;"></select>
           <span class="seg" id="mv-seg"><button id="btn-model-view" data-i18n="modelView">全层×头总览</button></span>
-          <span class="seg" id="nv-seg" style="display:none;"><button id="btn-neuron-hint" title="点击热力图单元格查看 Q·K 逐维分解" data-i18n="neuronHint">Q·K 分解：点击单元格</button></span>
+          <span class="seg" id="nv-seg" style="display:none;"><button id="btn-neuron-hint" data-i18n-title="neuronHintTip" title="点击热力图单元格查看 Q·K 逐维分解" data-i18n="neuronHint">Q·K 分解：点击单元格</button></span>
         </div>
-        <div class="hm-scroll"><div id="attn-heatmap"></div></div>
+        <div class="hm-scroll"><div id="attn-heatmap" tabindex="0" role="group" data-i18n-aria="heatmapAria" aria-label="注意力热力图"></div></div>
         <div class="hm-tip" id="hm-tip"></div>
       </div>
     </div>
 
     <!-- Model View / Neuron View 浮层 -->
-    <div id="mv-overlay" class="mv-overlay">
+    <div id="mv-overlay" class="mv-overlay" role="dialog" aria-modal="true" aria-labelledby="mv-title">
       <div class="mv-card">
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h4>Model View · 全层 × 全头注意力总览</h4>
+          <h4 id="mv-title" data-i18n="mvTitle">Model View · 全层 × 全头注意力总览</h4>
           <button id="mv-close" class="seg" style="padding:4px 10px;">✕</button>
         </div>
-        <div class="mv-cap">行 = 层（第 1 → N 层自上而下），列 = Head（1 → H）。
-          每格为该层该头的完整注意力矩阵（当前阶段：<span id="mv-stage"></span>）。
-          点击任意格 → 主视图定位到该层该头。</div>
-        <div id="mv-grid" class="mv-grid"></div>
+        <div class="mv-cap"><span data-i18n="mvCapA">行 = 层（第 1 → N 层自上而下），列 = Head（1 → H）。
+          每格为该层该头的完整注意力矩阵（当前阶段：</span><span id="mv-stage"></span><span data-i18n="mvCapB">）。
+          点击任意格 → 主视图定位到该层该头。</span></div>
+        <div id="mv-grid" class="mv-grid" tabindex="0" role="group" data-i18n-aria="mvGridAria" aria-label="Model View 总览网格"></div>
       </div>
     </div>
-    <div id="nv-overlay" class="mv-overlay">
+    <div id="nv-overlay" class="mv-overlay" role="dialog" aria-modal="true" aria-labelledby="nv-title">
       <div class="mv-card" style="min-width:min(92vw,640px);">
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h4>Neuron View · Q·K 逐维分解</h4>
+          <h4 id="nv-title" data-i18n="nvTitle">Neuron View · Q·K 逐维分解</h4>
           <button id="nv-close" class="seg" style="padding:4px 10px;">✕</button>
         </div>
         <div class="mv-cap" id="nv-cap"></div>
         <div id="nv-body"></div>
       </div>
     </div>
-    <div id="help-overlay" class="mv-overlay">
+    <div id="help-overlay" class="mv-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title-zh">
       <div class="mv-card">
 <div class="help-lang help-zh">
         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -619,7 +637,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       </div>
       <div class="help-lang help-en" hidden>
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h4>📖 Guide · How to use this page</h4>
+          <h4 id="help-title-en">📖 Guide · How to use this page</h4>
           <button id="help-close-en" class="seg" style="padding:4px 10px;">✕</button>
         </div>
         <div class="mv-cap">Understand the three-column layout and the core features in three minutes.</div>
@@ -653,42 +671,43 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
       </div>
 </div>
     </div>
-    <div id="wt-overlay" class="mv-overlay">
+    <div id="wt-overlay" class="mv-overlay" role="dialog" aria-modal="true" aria-labelledby="wt-title">
       <div class="mv-card wt-card">
         <div class="wt-head">
           <div>
-            <h4 style="margin:0;font-size:17px;">训练台</h4>
-            <div class="wt-sub">把「一堆随机数字」变成「会写莎士比亚的模型」——全程发生在你的浏览器里</div>
+            <h4 id="wt-title" style="margin:0;font-size:17px;" data-i18n="wtTitle">训练台</h4>
+            <div class="wt-sub" data-i18n="wtSub">把「一堆随机数字」变成「会写莎士比亚的模型」——全程发生在你的浏览器里</div>
           </div>
           <button id="wt-close" class="wt-x">✕</button>
         </div>
 
         <div class="wt-hero">
-          <div class="wt-stat"><span class="wt-num">525K</span><span class="wt-cap">可训练参数</span></div>
-          <div class="wt-stat"><span class="wt-num">63</span><span class="wt-cap">字符词表</span></div>
-          <div class="wt-stat"><span class="wt-num">4.14 <span class="wt-arrow">→</span> <b class="wt-good">1.52</b></span><span class="wt-cap">训练 loss（瞎猜 → 学成）</span></div>
+          <div class="wt-stat"><span class="wt-num">525K</span><span class="wt-cap" data-i18n="wtCapParams">可训练参数</span></div>
+          <div class="wt-stat"><span class="wt-num">63</span><span class="wt-cap" data-i18n="wtCapVocab">字符词表</span></div>
+          <div class="wt-stat"><span class="wt-num">4.14 <span class="wt-arrow">→</span> <b class="wt-good">1.52</b></span><span class="wt-cap" data-i18n="wtCapLoss">训练 loss（瞎猜 → 学成）</span></div>
         </div>
         <div id="wt-state" class="wt-note" style="margin:10px 2px 0;"></div>
 
         <div class="wt-sec">
-          <div class="wt-title">① 加载预训练权重</div>
-          <div class="wt-note"><code>tools/train.html</code> 在浏览器内训练的 TinyShakespeare 字符级模型，
+          <div class="wt-title" data-i18n="wtSecPretrain">① 加载预训练权重</div>
+          <div class="wt-note" data-i18n="wtPretrainNote"><code>tools/train.html</code> 在浏览器内训练的 TinyShakespeare 字符级模型，
           架构与本页可视化<b>逐算子一致</b>。加载后 <b>Dense</b> 视图生成真实文本，建议输入英文。</div>
-          <button id="btn-pretrain" class="btn wt-btn">⬇ 加载权重文件（4.4MB，首次后浏览器缓存）</button>
-          <div id="pretrain-status" class="wt-note"></div>
+          <button id="btn-pretrain" class="btn wt-btn" data-i18n="loadPretrainedBtn">⬇ 加载权重文件（4.4MB，首次后浏览器缓存）</button>
+          <div id="pretrain-status" class="wt-note" aria-live="polite"></div>
         </div>
 
         <div class="wt-sec">
-          <div class="wt-title">② 在线微调 · 亲眼看着 loss 下降</div>
-          <div class="wt-note">对已加载的权重继续训练 40 步（Adam lr=5e-5 · 每步 4 段×96 字符 · 约 10 秒）。
-          <span class="wt-lg"><i class="wt-dot" style="background:#7a86a0;"></i>预训练全程</span>
-          <span class="wt-lg"><i class="wt-dot" style="background:var(--c-accent);"></i>本次微调</span>
-          ——固定验证批「同题考试」，逐点可比。微调完重新生成可见差异。</div>
-          <div id="ft-chart-empty" class="wt-chart-empty">加载权重后，这里会画出完整的训练 loss 曲线</div>
+          <div class="wt-title" data-i18n="wtSecFinetune">② 在线微调 · 亲眼看着 loss 下降</div>
+          <div class="wt-note"><span data-i18n="wtFtNote">对已加载的权重继续训练 40 步（Adam lr=5e-5 · 每步 4 段×96 字符 · 约 10 秒）。</span>
+          <span class="wt-lg"><i class="wt-dot" style="background:#7a86a0;"></i><span data-i18n="wtLgBase">预训练全程</span></span>
+          <span class="wt-lg"><i class="wt-dot" style="background:var(--c-accent);"></i><span data-i18n="wtLgLive">本次微调</span></span>
+          <span data-i18n="wtFtTail">——固定验证批「同题考试」，逐点可比。微调完重新生成可见差异。</span></div>
+          <div id="ft-chart-empty" class="wt-chart-empty" data-i18n="ftChartEmpty">加载权重后，这里会画出完整的训练 loss 曲线</div>
           <canvas id="ft-chart" style="width:100%;display:none;border:1px solid var(--c-border);border-radius:10px;"></canvas>
           <button id="btn-finetune" class="btn wt-btn wt-btn-accent" disabled
+            data-i18n="finetuneBtn" data-i18n-title="finetuneBtnTip"
             title="对已加载的预训练模型跑真实反向传播（Adam）">⚡ 微调 40 步</button>
-          <div id="ft-status" class="wt-note"></div>
+          <div id="ft-status" class="wt-note" aria-live="polite"></div>
         </div>
       </div>
     </div>
@@ -703,8 +722,8 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     <h2 data-i18n="flowH2">数据流演示</h2>
 
     <label for="input-text" data-i18n="inputText">输入文本</label>
-    <textarea id="input-text" rows="2">我 爱 自然语言处理</textarea>
-    <div id="token-chips" class="chip-row" title="分词结果"></div>
+    <textarea id="input-text" rows="2" maxlength="64">我 爱 自然语言处理</textarea>
+    <div id="token-chips" class="chip-row" data-i18n-title="tokenChipsTip" title="分词结果"></div>
 
     <label for="preset-select" data-i18n="presets">预设句子</label>
     <select id="preset-select"></select>
@@ -755,7 +774,7 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
         <option value="0.9">0.9</option>
         <option value="0.95">0.95</option>
       </select>
-      <div id="sm-note" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;"></div>
+      <div id="sm-note" aria-live="polite" style="font-size:12px;color:var(--c-text-dim);margin-top:6px;line-height:1.6;"></div>
     </fieldset>
 
     <button id="btn-train-studio" class="btn" style="width:100%;margin-top:12px;text-align:left;">
@@ -768,7 +787,8 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
     <ol id="step-log"></ol>
     <div id="log-hint" data-i18n="hintBar">💡 运行后自动播放；⏸ 随时暂停 · ⏭ 单步前进 · 点击日志步骤可跳转</div>
 
-    <div id="tensor-tracker"><b data-i18n="tensorNow">当前张量</b><br><span data-i18n="tensorWaiting">待运行…</span></div>
+    <!-- 播放期间每步都刷新，过于频繁不适合播报：显式 off -->
+    <div id="tensor-tracker" aria-live="off"><b data-i18n="tensorNow">当前张量</b><br><span data-i18n="tensorWaiting">待运行…</span></div>
 
     <button id="export-toggle" class="btn" style="width:100%;margin-top:12px;" data-i18n="exportCode">📋 导出当前配置的模型代码</button>
     <div id="export-box">
@@ -790,40 +810,71 @@ html[data-theme="dark"] .chip{background:rgba(140,158,255,.12);color:var(--c-pri
   </div>
   <div class="dock-sep"></div>
   <div class="dock-group">
-    <button id="sc-reset" class="btn" title="回到开始">⏮</button>
-    <button id="sc-prev" class="btn" title="上一步">◀</button>
-    <button id="sc-play" class="btn" title="播放 / 暂停">▶</button>
-    <button id="sc-next" class="btn" title="单步前进">⏭︎</button>
-    <button id="sc-end" class="btn" title="跳到结束">⤓</button>
-    <span id="sc-pos">0 / 0</span>
+    <button id="sc-reset" class="btn" data-i18n-title="scResetTip" title="回到开始">⏮</button>
+    <button id="sc-prev" class="btn" data-i18n-title="scPrevTip" title="上一步">◀</button>
+    <button id="sc-play" class="btn" data-i18n-title="scPlayTip" title="播放 / 暂停">▶</button>
+    <button id="sc-next" class="btn" data-i18n-title="scNextTip" title="单步前进">⏭︎</button>
+    <button id="sc-end" class="btn" data-i18n-title="scEndTip" title="跳到结束">⤓</button>
+    <span id="sc-pos" aria-live="polite">0 / 0</span>
   </div>
 </div>
 
 <!-- 解释抽屉：点击结构图模块 / 日志步骤时滑出（默认隐藏） -->
 <div id="drawer-mask"></div>
-<aside id="drawer" aria-hidden="true">
+<aside id="drawer" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
   <div class="drawer-head">
     <span id="drawer-title" data-i18n="drawerNoteLabel">说明</span>
-    <button id="drawer-close" title="关闭（Esc）" data-i18n="drawerClose">✕ 关闭</button>
+    <button id="drawer-close" data-i18n-title="drawerCloseTip" title="关闭（Esc）" data-i18n="drawerClose">✕ 关闭</button>
   </div>
   <div id="drawer-body"></div>
 </aside>
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js" crossorigin="anonymous" onerror="window.__CDN_FAIL=(window.__CDN_FAIL||[]).concat('TensorFlow.js')"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous" onerror="window.__CDN_FAIL=(window.__CDN_FAIL||[]).concat('D3.js')"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
 <script>
 /* 语言选择：localStorage > 浏览器语言 > 中文。同步加载对应内容包（阻塞，保证主脚本可用）。 */
 (function(){
-  var lang = localStorage.getItem('lang')
-          || (navigator.language && navigator.language.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
+  var lang;
+  /* 隐私模式/沙箱 iframe 下 localStorage 可能抛 SecurityError，不能让语言引导整页死亡 */
+  try { lang = localStorage.getItem('lang'); } catch(e) { lang = null; }
+  lang = lang || (navigator.language && navigator.language.toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
   document.documentElement.dataset.lang = lang;
+  /* <html lang> 随语言更新：读屏软件发音与搜索引擎语言判断依赖它 */
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   window.APP_LANG = lang;
-  document.write('<script src="assets/i18n/content.' + lang + '.js" onerror="this.onerror=null;window.CONTENT_PACK_FALLBACK=true;var s=document.createElement(\'script\');s.src=\'assets/i18n/content.zh.js\';document.head.appendChild(s);"><\/script>');
-  document.write('<script src="assets/i18n/ui-strings.js"><\/script>');
+  /* 加载失败仅打标记：动态 fallback 与主脚本存在竞态（必然失效），统一由主脚本的依赖检查给出可见横幅 */
+  document.write('<script src="assets/i18n/content.' + lang + '.js" onerror="window.__I18N_FAIL=true"><\/script>');
+  document.write('<script src="assets/i18n/ui-strings.js" onerror="window.__I18N_FAIL=true"><\/script>');
 })();
 </script>
 <script>
+/* 依赖健康检查：CDN（tfjs/d3）或语言包任一缺失时显示可见错误横幅，而非静默白屏。
+   （KaTeX 为 defer 且有运行时兜底，不在此检查。） */
+(function(){
+  var missing = (window.__CDN_FAIL || []).slice();
+  if(!window.tf && missing.indexOf('TensorFlow.js') < 0) missing.push('TensorFlow.js');
+  if(!window.d3 && missing.indexOf('D3.js') < 0) missing.push('D3.js');
+  if(window.__I18N_FAIL || !window.CONTENT_PACK || !window.UI_STRINGS)
+    missing.push('语言包 i18n (assets/)');
+  if(!missing.length) return;
+  var b = document.createElement('div');
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+    'background:#b71c1c;color:#fff;padding:12px 16px;font:14px/1.6 sans-serif;text-align:center;';
+  b.textContent = '⚠️ 资源加载失败：' + missing.join('、') +
+    '。请检查网络（CDN 可能被屏蔽）后刷新。 / Failed to load: ' + missing.join(', ') +
+    '. Check your network connection and refresh.';
+  document.body.prepend(b);
+  throw new Error('Missing dependencies: ' + missing.join(', '));
+})();
+</script>
+<script>
+/* tfjs 后端选择：本应用模型极小（d≤512、L<64）且每层多次 arraySync 强制
+   GPU→CPU 同步，实测 CPU 后端显著更快更稳（2017 原版前向中位数
+   webgl 399.8ms / cpu 210.4ms，且免 WebGL 首次 1.3s warmup 尖刺）。
+   cpu 后端的注册同步完成（getBackend 立即生效），首个张量创建前调用即可 */
+tf.setBackend('cpu');
+
 /* 内容数据来自语言包（content.zh.js / content.en.js） */
 const { MODULE_DETAILS, HISTORY, ERAS, ARCH_NODES, ARCH_FRAMES, ARCH_EDGES,
   ARCH_SPECIAL_EDGES, ARCH_RESIDUALS, ARCH_VIEW_DAWN, ARCH_VIEW_PRE, ARCH_VIEW_DENSE,
@@ -837,6 +888,11 @@ const { MODULE_DETAILS, HISTORY, ERAS, ARCH_NODES, ARCH_FRAMES, ARCH_EDGES,
 function fmtNum(n){ return n.toLocaleString('en-US'); }
 /** 张量形状数组 → "[1, 5, 512]" 格式文本 */
 function fmtShape(shapeArr){ return '[' + shapeArr.join(', ') + ']'; }
+/** HTML 特殊字符转义：token/用户输入拼入 innerHTML 前的统一出口（内部常量走它亦无副作用） */
+function escHtml(x){
+  return String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 /* ============================================================
    模块1：配置管理（spec §5 超参数面板的数据源）
@@ -939,8 +995,13 @@ class Tokenizer {
     }
     return out;
   }
-  /** @returns {string[]} 预设示例句 */
+  /** @returns {string[]} 预设示例句（随界面语言；EN 与预训练字符模型输入习惯一致） */
   getPresets(){
+    if((window.APP_LANG || 'zh') === 'en')
+      return ['I love natural language processing',
+              'Transformers are deep learning models',
+              'Attention is all you need',
+              'Hello Transformer'];
     return ['我 爱 自然语言处理', 'Transformer 是 深度学习 模型',
             '注意力机制 很 强大', 'Hello Transformer'];
   }
@@ -988,14 +1049,26 @@ function denseVocab(){
   return Pretrained.vocab.map(c => CHAR_DISP[c] || c);
 }
 
+/* 输入长度上限：2017 原版位置编码表 peMaxLen=64，超长 slice 越界；
+   字符级分词下热力图 SVG 节点数随 token² 膨胀，统一限制 64 字符防页面冻结 */
+const MAX_INPUT_LEN = 64;
+/** 读取输入框文本（超长截断并回写；maxlength 已拦截常规输入，此处兜底程序化赋值） */
+function readInputText(){
+  const el = document.getElementById('input-text');
+  if(el.value.length > MAX_INPUT_LEN) el.value = el.value.slice(0, MAX_INPUT_LEN);
+  return el.value;
+}
+
 /** 右栏 token 芯片渲染（随输入实时刷新；预训练加载后切换字符级） */
 function renderTokenChips(){
   const toks = denseTokens(document.getElementById('input-text').value);
   document.getElementById('token-chips').innerHTML =
-    toks.map(t => '<span class="chip">' + t + '</span>').join('');
+    toks.map(t => '<span class="chip">' + escHtml(t) + '</span>').join('');
 }
 
 (function initTokenizerUI(){
+  /* 默认输入随界面语言（预设首条），避免 EN 模式下残留中文硬编码 */
+  document.getElementById('input-text').value = tokenizer.getPresets()[0];
   const sel = document.getElementById('preset-select');
   sel.innerHTML = tokenizer.getPresets()
     .map(s => '<option>' + s + '</option>').join('');
@@ -1042,21 +1115,31 @@ const PEWave = {
 
   /**
    * 绘制 seq_len 个位置、当前 d_model 下指定维度的波形。
+   * 正弦位置编码是纯初等数学，直接 JS 计算（公式与 PositionalEncoding.encode
+   * 逐维一致），避免每次击键都跑 tf 张量 + arraySync 强制 GPU→CPU 同步；
+   * seqLen/dModel/语言未变时跳过重绘。
    * @param {number} seqLen 序列长度
    * @param {number} dModel 当前隐藏维度
    */
+  _lastKey: '',
   render(seqLen, dModel){
+    const key = seqLen + '|' + dModel + '|' + (window.APP_LANG || 'zh');
+    if(key === this._lastKey) return;
+    this._lastKey = key;
     const host = document.getElementById('pe-wave');
     const dims = this.DIMS.filter(d => d < dModel);
-    /* 多取一些位置让曲线更平滑（至少 32 个点） */
-    const data = tf.tidy(() =>
-      PositionalEncoding.encode(Math.max(seqLen, 32), dModel).arraySync()[0]);
+    /* 与 encode 相同的取值：偶数维 sin、奇数维 cos，分母由偶数下标 i 决定 */
+    const peVal = (pos, d) => {
+      const i = d - (d % 2);
+      const denom = Math.pow(10000, (2 * i) / dModel);
+      return d % 2 ? Math.cos(pos / denom) : Math.sin(pos / denom);
+    };
     const xs = v => this.PAD_L + v / Math.max(seqLen - 1, 1) * (this.W - this.PAD_L);
     const ys = v => (this.H - this.PAD_B) / 2 - v * ((this.H - this.PAD_B) / 2 - 8);
     const colors = ['#1a237e','#ff6f00','#2e7d32','#c62828',
                     '#00838f','#6a1b9a','#ef6c00','#37474f'];
     let svg = '<svg width="' + this.W + '" height="' + this.H +
-              '" role="img" aria-label="位置编码波形">';
+              '" role="img" aria-label="' + T('peWaveAria') + '">';
     svg += '<line x1="' + this.PAD_L + '" y1="' + ys(0) + '" x2="' + this.W +
            '" y2="' + ys(0) + '" stroke="var(--c-border)" stroke-dasharray="3 3"/>';
     svg += '<text x="2" y="' + (ys(1) + 4) + '" font-size="11" fill="var(--c-text-dim)">+1</text>';
@@ -1065,7 +1148,7 @@ const PEWave = {
            '" font-size="11" fill="var(--c-text-dim)" text-anchor="end">pos→</text>';
     dims.forEach((d, k) => {
       const pts = [];
-      for(let p = 0; p < seqLen; p++) pts.push(xs(p).toFixed(1) + ',' + ys(data[p][d]).toFixed(1));
+      for(let p = 0; p < seqLen; p++) pts.push(xs(p).toFixed(1) + ',' + ys(peVal(p, d)).toFixed(1));
       const dimLabel = 'dim ' + d + (d % 2 ? '(cos)' : '(sin)');
       svg += '<polyline points="' + pts.join(' ') +
              '" fill="none" stroke="' + colors[k % colors.length] +
@@ -1073,7 +1156,7 @@ const PEWave = {
     });
     svg += '</svg>';
     host.innerHTML = svg;
-    host.title = '曲线对应维度：' + dims.join(', ');
+    host.title = T('peWaveDimsTip')(dims.join(', '));
   }
 };
 
@@ -1765,16 +1848,23 @@ const Drawer = {
   },
   /** @param {string} title @param {string} html */
   open(title, html){
+    /* 记录触发元素：关闭时焦点归还（a11y）；打开时焦点移入关闭按钮 */
+    this._prevFocus = document.activeElement;
     document.getElementById('drawer-title').textContent = title;
     document.getElementById('drawer-body').innerHTML = html;
     this.el.classList.add('open');
     this.mask.classList.add('open');
     this.el.setAttribute('aria-hidden', 'false');
+    document.getElementById('drawer-close').focus();
   },
   close(){
+    const wasOpen = this.el.classList.contains('open');
     this.el.classList.remove('open');
     this.mask.classList.remove('open');
     this.el.setAttribute('aria-hidden', 'true');
+    if(wasOpen && this._prevFocus && document.contains(this._prevFocus))
+      this._prevFocus.focus();
+    this._prevFocus = null;
   }
 };
 Drawer.init();
@@ -1991,7 +2081,11 @@ const ArchitectureRenderer = {
     const wrap = document.getElementById('arch-wrap');
     const g = this.svg.append('g').selectAll('g.node').data(v.nodes)
       .join('g').attr('class','node')
-      .attr('transform', n => 'translate(' + n.x + ',' + n.y + ')');
+      .attr('transform', n => 'translate(' + n.x + ',' + n.y + ')')
+      /* 键盘可达：Tab 聚焦节点，Enter/Space 打开详情抽屉（与 click 等价） */
+      .attr('tabindex', 0)
+      .attr('role', 'button')
+      .attr('aria-label', n => n.label);
     g.append('rect')
       .attr('width', nw).attr('height', ARCH_LAYOUT.nodeH)
       .attr('rx', 9)
@@ -2028,6 +2122,11 @@ const ArchitectureRenderer = {
     /* 事件：点击选中 → 详情面板；悬停 → tooltip */
     g.on('click', function(ev, n){
       ev.stopPropagation();
+      ArchitectureRenderer.highlight([n.id]);
+      DetailPanel.show(n.detail || n.id);
+    }).on('keydown', function(ev, n){
+      if(ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
       ArchitectureRenderer.highlight([n.id]);
       DetailPanel.show(n.detail || n.id);
     }).on('mousemove', function(ev, n){
@@ -2084,6 +2183,9 @@ const Timeline = {
       const li = document.createElement('li');
       li.className = 'tl-item';
       li.dataset.year = h.year + '_' + h.name;   // 同年多条目不冲突
+      /* 键盘可达：Tab 聚焦，Enter/Space 触发与 click 相同的选中逻辑 */
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
       li.innerHTML =
         '<div class="tl-year">' + h.year + (h.primary ?
           ' <span style="font-size:11px;background:var(--c-accent);color:#fff;' +
@@ -2092,6 +2194,9 @@ const Timeline = {
         '<div class="tl-paper">《' + h.paper + '》</div>' +
         '<div class="tl-contrib">' + h.contrib + '</div>';
       li.addEventListener('click', () => this.select(h));
+      li.addEventListener('keydown', e => {
+        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); this.select(h); }
+      });
       ol.appendChild(li);
     });
     const f = document.createElement('li');
@@ -2166,13 +2271,15 @@ const AttentionHeatmap = {
     document.querySelectorAll('#kind-seg button').forEach(b =>
       b.classList.toggle('on', b.dataset.kind === k));
   },
-  setHead(i){ if(!this.data) return; this.head = i; this._syncControls(); this._draw(); },
-  setStage(s){ if(!this.data) return; this.stage = s; this._syncControls(); this._draw(); },
-  setLayer(i){ if(!this.data) return; this.layer = i; this._syncControls(); this._draw(); },
+  /* 相等性短路：自动播放每层多步会重复 setLayer 同一层，跳过无效重绘。
+     setData 重置 head/layer 为 0 并直接 _draw，新数据必然强制刷新 */
+  setHead(i){ if(!this.data || this.head === i) return; this.head = i; this._syncControls(); this._draw(); },
+  setStage(s){ if(!this.data || this.stage === s) return; this.stage = s; this._syncControls(); this._draw(); },
+  setLayer(i){ if(!this.data || this.layer === i) return; this.layer = i; this._syncControls(); this._draw(); },
   clear(){
     document.getElementById('attn-heatmap').innerHTML =
       '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
-      T('heatmapPlaceholder');
+      T('heatmapPlaceholder') + '</div>';
     this.data = null;
     /* 禁用整组控件（含层下拉），避免「点了没反应」的假死观感 */
     document.getElementById('layer-select').style.display = 'none';
@@ -2256,8 +2363,8 @@ const AttentionHeatmap = {
           .attr('width', cell - 2).attr('height', cell - 2).attr('rx', 3)
           .attr('fill', ramp(Math.max(0, Math.min(1, t(v)))))
           .on('mousemove', ev => {
-            tip.innerHTML = 'Q="<b>' + this.data.tokens[r] + '</b>" K="<b>' +
-              cols[c] + '</b>"<br>' + (stage === 'post' ? 'P=' : 'score=') +
+            tip.innerHTML = 'Q="<b>' + escHtml(this.data.tokens[r]) + '</b>" K="<b>' +
+              escHtml(cols[c]) + '</b>"<br>' + (stage === 'post' ? 'P=' : 'score=') +
               (Math.abs(v) < 1e-4 && stage === 'post' ? v.toExponential(1) : v.toFixed(4)) +
               (this.data.q ? T('clickForQK') : '');
             tip.style.opacity = 1;
@@ -2327,12 +2434,13 @@ const AttentionHeatmap = {
         }
         cv.addEventListener('click', () => {
           this.setLayer(l); this.setHead(h);
-          document.getElementById('mv-overlay').classList.remove('open');
+          closeOverlay('mv-overlay');
         });
         grid.appendChild(cv);
       }
     }
     document.getElementById('mv-overlay').classList.add('open');
+    focusOverlay(document.getElementById('mv-overlay'), '#mv-close');
   },
 
   /**
@@ -2356,7 +2464,7 @@ const AttentionHeatmap = {
     const sh = Math.sqrt(dh).toFixed(2);
     document.getElementById('nv-cap').innerHTML =
       T('nvCellTitle')(l + 1, h + 1) +
-      T('nvQK')(this.data.tokens[qi], qi, cols[ki], ki) + ' d<sub>h</sub>=' + dh;
+      T('nvQK')(escHtml(this.data.tokens[qi]), qi, escHtml(cols[ki]), ki) + ' d<sub>h</sub>=' + dh;
     const vecRow = (label, vec, color) => {
       const mx = Math.max(...vec.map(Math.abs), 1e-9);
       return '<div class="nv-label">' + label + '</div>' +
@@ -2375,8 +2483,24 @@ const AttentionHeatmap = {
       '≈' + sh + ') = <b>' + (dot / Math.sqrt(dh)).toFixed(3) +
       '</b> &nbsp;（热力图 Softmax 前 score = ' + preScore.toFixed(3) + '）</div>';
     document.getElementById('nv-overlay').classList.add('open');
+    focusOverlay(document.getElementById('nv-overlay'), '#nv-close');
   }
 };
+
+/* 浮层焦点管理（a11y）：打开时焦点移入关闭按钮并记录触发元素，关闭时归还。非完整焦点陷阱 */
+function focusOverlay(ov, closeSel){
+  ov._prevFocus = document.activeElement;
+  const b = ov.querySelector(closeSel);
+  if(b) b.focus();
+}
+function closeOverlay(id){
+  const ov = document.getElementById(id);
+  const wasOpen = ov.classList.contains('open');
+  ov.classList.remove('open');
+  if(wasOpen && ov._prevFocus && document.contains(ov._prevFocus))
+    ov._prevFocus.focus();
+  ov._prevFocus = null;
+}
 
 /* 训练台抽屉：入口 / 关闭 / 状态同步 */
 function setTrainEntry(text){
@@ -2389,35 +2513,31 @@ function syncTrainStudio(){
 }
 document.getElementById('btn-train-studio').addEventListener('click', () => {
   syncTrainStudio();
-  document.getElementById('wt-overlay').classList.add('open');
+  const ov = document.getElementById('wt-overlay');
+  ov.classList.add('open');
+  focusOverlay(ov, '#wt-close');
   FineTuner.drawChart();          // 抽屉打开时补画（隐藏期间 clientWidth=0 会跳过）
 });
-document.getElementById('wt-close').addEventListener('click',
-  () => document.getElementById('wt-overlay').classList.remove('open'));
+document.getElementById('wt-close').addEventListener('click', () => closeOverlay('wt-overlay'));
 document.getElementById('wt-overlay').addEventListener('click', e => {
-  if(e.target.id === 'wt-overlay') e.target.classList.remove('open');
+  if(e.target.id === 'wt-overlay') closeOverlay('wt-overlay');
 });
 window.addEventListener('keydown', e => {
-  if(e.key === 'Escape') document.getElementById('wt-overlay').classList.remove('open');
+  if(e.key === 'Escape') closeOverlay('wt-overlay');
 });
 
 /* Model View / Neuron View 控件接线 */
 document.getElementById('btn-model-view').addEventListener('click',
   () => AttentionHeatmap.showModelView());
-document.getElementById('mv-close').addEventListener('click',
-  () => document.getElementById('mv-overlay').classList.remove('open'));
-document.getElementById('nv-close').addEventListener('click',
-  () => document.getElementById('nv-overlay').classList.remove('open'));
+document.getElementById('mv-close').addEventListener('click', () => closeOverlay('mv-overlay'));
+document.getElementById('nv-close').addEventListener('click', () => closeOverlay('nv-overlay'));
 ['mv-overlay', 'nv-overlay'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
-    if(e.target.id === id) e.target.classList.remove('open');
+    if(e.target.id === id) closeOverlay(id);
   });
 });
 window.addEventListener('keydown', e => {
-  if(e.key === 'Escape'){
-    document.getElementById('mv-overlay').classList.remove('open');
-    document.getElementById('nv-overlay').classList.remove('open');
-  }
+  if(e.key === 'Escape'){ closeOverlay('mv-overlay'); closeOverlay('nv-overlay'); }
 });
 
 /* ---------- Top-K 概率条形图（单系列：直接数值标注，无需图例） ---------- */
@@ -2432,7 +2552,7 @@ const TopKChart = {
     return items.map(it => {
       const pct = (it.prob * 100).toFixed(1);
       const w = Math.max(2, it.prob / max * 100);
-      return '<div class="bar-row"><span style="min-width:64px;">' + it.token +
+      return '<div class="bar-row"><span style="min-width:64px;">' + escHtml(it.token) +
         '</span><span class="bar-track"><span class="bar-fill" style="width:' +
         w + '%"></span></span><span style="min-width:48px;text-align:right;">' +
         pct + '%</span></div>';
@@ -2548,7 +2668,7 @@ function logRowHTML(s, idx){
   const num = CIRCLED[idx] || (idx + 1) + '.';
   let html = '<span class="log-step">' + num + ' ' + s.label + '</span>';
   if(s.tokens){
-    html += '<br>' + s.tokens.map(t => '<span class="chip">' + t + '</span>').join('');
+    html += '<br>' + s.tokens.map(t => '<span class="chip">' + escHtml(t) + '</span>').join('');
   }
   if(s.shape) html += '<br><span class="log-shape">' + s.shape + '</span>';
   const meta = [];
@@ -2557,7 +2677,7 @@ function logRowHTML(s, idx){
   if(s.ms !== undefined) meta.push(s.ms + ' ms');
   if(meta.length) html += '<span class="log-meta">' + meta.join(' · ') + '</span>';
   if(s.note) html += '<span class="log-meta" style="color:var(--c-accent);">' +
-                     s.note + '</span>';
+                     escHtml(s.note) + '</span>';
   return '<li>' + html + '</li>';
 }
 
@@ -2814,15 +2934,44 @@ window.addEventListener('config-changed', () => {
   }
 });
 
+/** 解析后的权重对象缓存：二次点击直接复用，免去重复 fetch + 主线程 4.4MB JSON.parse */
+let pretrainedWeightsCache = null;
+
 async function loadPretrained(){
   const btn = document.getElementById('btn-pretrain');
   const st = document.getElementById('pretrain-status');
   btn.disabled = true;
-  st.textContent = T('downloadingWeights');
   try{
-    const res = await fetch('assets/pretrained-dense.json');
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const w = await res.json();
+    let w = pretrainedWeightsCache;
+    if(!w){
+      st.textContent = T('downloadingWeights')('');
+      const res = await fetch('assets/pretrained-dense.json');
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      /* 流式读取 + 进度反馈：有 content-length 报百分比，否则报已读 MB 数 */
+      const total = Number(res.headers.get('content-length')) || 0;
+      let text;
+      if(res.body && res.body.getReader){
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        for(;;){
+          const { done, value } = await reader.read();
+          if(done) break;
+          chunks.push(value); received += value.length;
+          st.textContent = T('downloadingWeights')(total
+            ? ' ' + Math.round(received / total * 100) + '%'
+            : ' ' + (received / 1048576).toFixed(1) + 'MB');
+        }
+        const buf = new Uint8Array(received);
+        let off = 0;
+        for(const c of chunks){ buf.set(c, off); off += c.length; }
+        text = new TextDecoder().decode(buf);
+      }else{
+        text = await res.text();   // 无 ReadableStream 的退化路径
+      }
+      w = JSON.parse(text);
+      pretrainedWeightsCache = w;
+    }
     /* 固定超参 128/4/3（触发 config-changed → 重建随机权重），随后覆盖为训练权重 */
     const setHp = (id, val) => {
       const el = document.getElementById(id);
@@ -2837,8 +2986,11 @@ async function loadPretrained(){
     const Vm = w.meta.vocab.length;
     const swap = (v, flat, shape) => {
       const t = tf.tensor(flat, shape);
+      const nv = tf.variable(t);
+      /* 与 toVar 同理：variable 与 t 共享 dataId，需释放多余引用防 WebGL 纹理泄漏 */
+      t.dispose();
       v.dispose();
-      return tf.variable(t);
+      return nv;
     };
     M.embed = swap(M.embed, w.embed, [Vm, M.d]);
     M.gF = swap(M.gF, w.gF, [M.d]);
@@ -2955,13 +3107,26 @@ const FineTuner = {
     const btn = document.getElementById('btn-finetune');
     const st = document.getElementById('ft-status');
     this.running = true; btn.disabled = true;
+    /* 微调期间锁定会重建模型变量的入口：改超参（config-changed → dispose 重建）
+       或重新加载权重都会把优化器脚下的变量换掉，导致错乱 */
+    const locked = ['hp-d-model', 'hp-num-heads', 'hp-num-layers', 'btn-pretrain']
+      .map(id => { const el = document.getElementById(id);
+                   return { el, was: el.disabled }; });
+    locked.forEach(l => { l.el.disabled = true; });
+    let opt = null;
     try{
       await this.ensureCorpus();
       const M = modernModel.dense;
       const vocab = Pretrained.vocab;
       const Vn = vocab.length;
-      const charIds = [...this.corpus].map(c => vocab.indexOf(c));
-      const B = 4, T = 96, STEPS = 40;
+      /* 词表外字符（indexOf=-1）直接丢弃，避免负下标污染训练批 */
+      const charIds = [...this.corpus].map(c => vocab.indexOf(c)).filter(i => i >= 0);
+      /* 局部序列长度命名 TL：单字母 T 会遮蔽全局文案函数 T(key)（历史 bug） */
+      const B = 4, TL = 96, STEPS = 40;
+      if(charIds.length <= TL + 1){
+        st.textContent = T('corpusTooShort')(charIds.length);
+        return;   // finally 会恢复锁定的控件
+      }
       this.baseHist = Pretrained.info.lossHist || [];
       this.liveHist = [];
       this.drawChart();
@@ -2969,27 +3134,28 @@ const FineTuner = {
       const mkBatch = () => {
         const flat = [], tgt = [];
         for(let b = 0; b < B; b++){
-          const p = Math.floor(Math.random() * (charIds.length - T - 1));
-          for(let t = 0; t < T; t++) flat.push(charIds[p + t]);
-          for(let t = 1; t <= T; t++) tgt.push(charIds[p + t]);
+          const p = Math.floor(Math.random() * (charIds.length - TL - 1));
+          for(let t = 0; t < TL; t++) flat.push(charIds[p + t]);
+          for(let t = 1; t <= TL; t++) tgt.push(charIds[p + t]);
         }
         return { flat, tgt };
       };
       const ev = mkBatch();
       const evalLoss = () => tf.tidy(() => {
-        const lg = M.forwardTrain(ev.flat, B, T);
+        const lg = M.forwardTrain(ev.flat, B, TL);
         const lp = tf.logSoftmax(lg.reshape([-1, Vn]));
         return lp.mul(tf.oneHot(tf.tensor1d(ev.tgt, 'int32'), Vn))
           .sum(-1).neg().mean().dataSync()[0];
       });
       this.liveHist.push(+evalLoss().toFixed(4));   // 微调前起点
       this.drawChart();
-      const opt = tf.train.adam(5e-5);
+      const opt0 = tf.train.adam(5e-5);
+      opt = opt0;
       st.textContent = T('backpropRunning');
       for(let s = 0; s < STEPS; s++){
         const { flat, tgt } = mkBatch();
-        const loss = opt.minimize(() => {
-          const lg = M.forwardTrain(flat, B, T);
+        const loss = opt0.minimize(() => {
+          const lg = M.forwardTrain(flat, B, TL);
           const lp = tf.logSoftmax(lg.reshape([-1, Vn]));
           return lp.mul(tf.oneHot(tf.tensor1d(tgt, 'int32'), Vn))
             .sum(-1).neg().mean();
@@ -3000,14 +3166,17 @@ const FineTuner = {
         this.drawChart();
         await tf.nextFrame();
       }
-      opt.dispose();
       const a = this.liveHist[0], b = this.liveHist[this.liveHist.length - 1];
       st.innerHTML = T('finetuneDone')(b < a, a.toFixed(3), b.toFixed(3));
     }catch(e){
       st.textContent = T('finetuneFailed')(e.message);
+    }finally{
+      /* 异常路径同样释放 Adam 的 m/v slot 张量，并恢复锁定控件的原 disabled 状态 */
+      if(opt) opt.dispose();
+      locked.forEach(l => { l.el.disabled = l.was; });
+      this.running = false;
+      btn.disabled = false;
     }
-    this.running = false;
-    btn.disabled = false;
   }
 };
 document.getElementById('btn-finetune').addEventListener('click', () => FineTuner.run());
@@ -3027,7 +3196,7 @@ function toIds(tokens){
 const DecoderDemo = {
   /** 从 <bos> 逐步预测：掩码自注意力/交叉注意力热力图 + Top-5 分布 */
   run(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
     DataFlowAnimator.stop();
@@ -3107,7 +3276,7 @@ const DecoderDemo = {
           '<li class="current"><span class="log-step">' + s.label + '</span>' +
           '<span class="log-shape">' + s.shape + '</span>' +
           (s.note ? '<span class="log-meta" style="color:var(--c-accent);">' +
-            s.note + '</span>' : '') +
+            escHtml(s.note) + '</span>' : '') +
           (s.stats ? '<span class="log-meta">min ' + s.stats.min + ' · max ' +
             s.stats.max + ' · mean ' + s.stats.mean + '</span>' : '') +
           '</li>');
@@ -3117,7 +3286,7 @@ const DecoderDemo = {
         li.insertAdjacentHTML('beforeend',
           '<li class="current"><span class="log-step">' + s.label + '</span>' +
           TopKChart.render(d.top5) +
-          '<span class="log-meta">选中「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+          '<span class="log-meta">选中「<b>' + escHtml(d.chosen) + '</b>」 p=' + d.p.toFixed(3) +
           ' · 整步耗时 ' + d.ms + ' ms</span></li>');
         document.getElementById('tensor-tracker').innerHTML =
           '<b>Decoder 第 ' + (s.di + 1) + ' 步</b><br>logits <b>[1, 1, ' +
@@ -3126,7 +3295,7 @@ const DecoderDemo = {
         li.insertAdjacentHTML('beforeend',
           '<li><span class="log-step">生成结束：</span>' +
           (s.tokens.length
-            ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+            ? s.tokens.map(t => '<span class="chip">' + escHtml(t) + '</span>').join('')
             : '（未产生 token）') + '</li>');
         ArchitectureRenderer.highlight(['out']);
         return;
@@ -3147,7 +3316,7 @@ const DecoderDemo = {
 const DenseDemo = {
   /** Dense 视图：teacher-forcing 整段前向，逐层 RMSNorm/RoPE/GQA/SwiGLU */
   runForward(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'dense') ArchitectureRenderer.setView('dense');
     DataFlowAnimator.stop();
@@ -3199,9 +3368,18 @@ const DenseDemo = {
     StepPlayer.runAuto();
   },
 
+  /** 释放 KV Cache 常驻张量（生成结束后缓存仍挂在 this._cache；超参/视图重置时也要清理） */
+  disposeCache(){
+    if(this._cache){
+      this._cache.k.forEach(t => t && t.dispose());
+      this._cache.v.forEach(t => t && t.dispose());
+      this._cache = null;
+    }
+  },
+
   /** Dense 视图：KV Cache 增量生成——Prefill 整段一次写缓存，此后每步只前向 1 个新 token */
   runGenerate(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'dense') ArchitectureRenderer.setView('dense');
     DataFlowAnimator.stop();
@@ -3216,11 +3394,8 @@ const DenseDemo = {
     const steps = [{ kind: 'note', label: T('demoNote') }];
     const data = [];
     const genToks = [], genIds = [];
-    /* 释放上一轮运行的缓存张量（防 WebGL 缓冲泄漏），再建新缓存 */
-    if(this._cache){
-      this._cache.k.forEach(t => t && t.dispose());
-      this._cache.v.forEach(t => t && t.dispose());
-    }
+    /* 释放上一轮运行的缓存张量（防后端缓冲泄漏），再建新缓存 */
+    this.disposeCache();
     const cache = this._cache = { len: 0, k: [], v: [] };
 
     /* Prefill：整段一次前向，全部 K/V 写入缓存，末位置直接给出第 1 个生成 token */
@@ -3350,7 +3525,7 @@ const DenseDemo = {
           ? ' · 只前向 1 token · 缓存 ' + d.cacheAfter + ' 条 K/V'
           : ' · 整段 ' + d.fwdLen + ' tokens 并入缓存') + '</span>' +
         TopKChart.render(d.top5) +
-        '<span class="log-meta">采样「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        '<span class="log-meta">采样「<b>' + escHtml(d.chosen) + '</b>」 p=' + d.p.toFixed(3) +
         ' · ' + samplingLabel() +
         ' · 增量前向 ' + d.ms + ' ms' +
         (d.decode ? ' <i>（整段重算对照 ' + d.baseLen + ' tk ' + d.bms + ' ms）</i>' : '') +
@@ -3359,7 +3534,7 @@ const DenseDemo = {
     }else if(s.kind === 'end'){
       log.insertAdjacentHTML('beforeend',
         '<li><span class="log-step">生成结束：</span>' +
-        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + escHtml(t) + '</span>').join('')
           : '（未产生 token）') + '</li>');
       ArchitectureRenderer.clearHighlight();
       return;
@@ -3376,7 +3551,7 @@ const DenseDemo = {
    ============================================================ */
 const MoEDemo = {
   runForward(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'moe') ArchitectureRenderer.setView('moe');
     DataFlowAnimator.stop();
@@ -3471,7 +3646,7 @@ const MoEDemo = {
       log.insertAdjacentHTML('beforeend',
         '<li class="current"><span class="log-step">LM Head（权重绑定）· 预测下一词</span>' +
         TopKChart.render(s.top5) +
-        '<span class="log-meta">Top-1「<b>' + s.top5[0].token + '</b>」 p=' +
+        '<span class="log-meta">Top-1「<b>' + escHtml(s.top5[0].token) + '</b>」 p=' +
         s.top5[0].prob.toFixed(3) + '（随机权重仅展示机制）</span>' +
         '<span class="log-step" style="display:block;margin-top:6px;">全层专家负载：</span>' +
         load.map((v, i) => '<span class="chip">E' + (i + 1) + '×' + v + '</span>').join('') +
@@ -3484,9 +3659,18 @@ const MoEDemo = {
     log.lastElementChild.scrollIntoView({ block:'nearest' });
   },
 
+  /** 释放 KV Cache 常驻张量（生成结束后缓存仍挂在 this._cache；超参/视图重置时也要清理） */
+  disposeCache(){
+    if(this._cache){
+      this._cache.k.forEach(t => t && t.dispose());
+      this._cache.v.forEach(t => t && t.dispose());
+      this._cache = null;
+    }
+  },
+
   /** MoE 视图：KV Cache 增量生成（每步只前向 1 token，含真实 Router 门控） */
   runGenerate(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'moe') ArchitectureRenderer.setView('moe');
     DataFlowAnimator.stop();
@@ -3506,11 +3690,8 @@ const MoEDemo = {
             'concat 与内核启动开销占主导，真实大模型长上下文下增量优势随长度放大。' }];
     const data = [];
     const genToks = [], genIds = [];
-    /* 释放上一轮运行的缓存张量（防 WebGL 缓冲泄漏），再建新缓存 */
-    if(this._cache){
-      this._cache.k.forEach(t => t && t.dispose());
-      this._cache.v.forEach(t => t && t.dispose());
-    }
+    /* 释放上一轮运行的缓存张量（防后端缓冲泄漏），再建新缓存 */
+    this.disposeCache();
     const cache = this._cache = { len: 0, k: [], v: [] };
 
     /* Prefill */
@@ -3589,7 +3770,7 @@ const MoEDemo = {
           ? ' · 只前向 1 token · 缓存 ' + d.cacheAfter + ' 条 K/V'
           : ' · 整段 ' + d.fwdLen + ' tokens 并入缓存') + '</span>' +
         TopKChart.render(d.top5) +
-        '<span class="log-meta">采样「<b>' + d.chosen + '</b>」 p=' + d.p.toFixed(3) +
+        '<span class="log-meta">采样「<b>' + escHtml(d.chosen) + '</b>」 p=' + d.p.toFixed(3) +
         ' · ' + samplingLabel() +
         ' · 增量前向 ' + d.ms + ' ms' +
         (d.decode ? ' <i>（整段重算对照 ' + d.baseLen + ' tk ' + d.bms + ' ms）</i>' : '') +
@@ -3599,7 +3780,7 @@ const MoEDemo = {
       ArchitectureRenderer.highlight(['lnf']);
       log.insertAdjacentHTML('beforeend',
         '<li><span class="log-step">生成结束：</span>' +
-        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + t + '</span>').join('')
+        (s.tokens.length ? s.tokens.map(t => '<span class="chip">' + escHtml(t) + '</span>').join('')
           : '（未产生 token）') + '</li>');
       return;
     }
@@ -3813,7 +3994,7 @@ renderParamSummary();
 
 /* 位置编码波形：随序列长度与超参数变化刷新 */
 function curSeqLen(){
-  return tokenizer.tokenize(document.getElementById('input-text').value).length;
+  return tokenizer.tokenize(readInputText()).length;
 }
 window.addEventListener('config-changed',
   () => PEWave.render(curSeqLen(), Config.d_model));
@@ -3829,7 +4010,7 @@ const App = {
 
   /** 「开始前向传播」：计算一次 → 热力图就绪 → 分步动画回放 */
   runForward(){
-    const text = document.getElementById('input-text').value;
+    const text = readInputText();
     if(!text.trim()) return;
     if(ArchitectureRenderer.view !== 'orig') ArchitectureRenderer.setView('orig');
     DataFlowAnimator.stop();
@@ -3873,6 +4054,9 @@ const App = {
       '<b>' + T('tensorNow') + '</b><br>' + T('tensorWaiting');
     AttentionHeatmap.clear();
     ArchitectureRenderer.clearHighlight();
+    /* KV Cache 常驻张量一并释放（否则要等下次生成才清理） */
+    DenseDemo.disposeCache();
+    MoEDemo.disposeCache();
   }
 };
 
@@ -3882,16 +4066,27 @@ window.addEventListener('config-changed', () => App.resetRunState());
 /* ============================================================
    模块14b：运行按钮随视图自适应（消除「演示只属于 2017」的误导）
    ============================================================ */
+/** 运行入口统一异常兜底：tf 错误（越界/OOM/形状不符）显示在日志区，避免静默假死 */
+function runGuarded(fn){
+  try { fn(); }
+  catch(err){
+    console.error(err);
+    DataFlowAnimator.stop();
+    document.getElementById('step-log').innerHTML =
+      '<li><span class="log-note">⚠️ ' + T('runError') + '：' +
+      String(err && err.message || err).replace(/[<>&]/g, '') + '</span></li>';
+  }
+}
 function updateRunButtons(view){
   const b1 = document.getElementById('run-forward');
   const b2 = document.getElementById('run-decoder');
   const spec = {
-    orig: [[T('runFwd'), () => App.runForward()],
-           [T('decoderDemo'), () => DecoderDemo.run()]],
-    dense: [[T('denseFwd'), () => DenseDemo.runForward()],
-            [T('denseGen'), () => DenseDemo.runGenerate()]],
-    moe: [[T('moeFwd'), () => MoEDemo.runForward()],
-          [T('moeGen'), () => MoEDemo.runGenerate()]]
+    orig: [[T('runFwd'), () => runGuarded(() => App.runForward())],
+           [T('decoderDemo'), () => runGuarded(() => DecoderDemo.run())]],
+    dense: [[T('denseFwd'), () => runGuarded(() => DenseDemo.runForward())],
+            [T('denseGen'), () => runGuarded(() => DenseDemo.runGenerate())]],
+    moe: [[T('moeFwd'), () => runGuarded(() => MoEDemo.runForward())],
+          [T('moeGen'), () => runGuarded(() => MoEDemo.runGenerate())]]
   }[view];
   [b1, b2].forEach((b, i) => {
     if(spec && spec[i]){
@@ -3907,7 +4102,7 @@ function updateRunButtons(view){
 /* 热力图初始占位提示；控件组在无数据前禁用置灰 */
 document.getElementById('attn-heatmap').innerHTML =
   '<div style="color:var(--c-text-dim);font-size:13px;padding:18px 4px;">' +
-  T('heatmapPlaceholder');
+  T('heatmapPlaceholder') + '</div>';
 (function(){
   const ctl = document.getElementById('heatmap-controls');
   ctl.style.opacity = .55; ctl.style.pointerEvents = 'none';
@@ -3948,12 +4143,16 @@ function applyStaticI18n(){
     const k = el.dataset.i18nTitle;
     if(dict[k] !== undefined) el.title = dict[k];
   });
+  document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+    const k = el.dataset.i18nAria;
+    if(dict[k] !== undefined) el.setAttribute('aria-label', dict[k]);
+  });
   const lt = document.getElementById('lang-toggle');
   if(lt) lt.textContent = lang === 'zh' ? '🌐 EN' : '🌐 中文';
 }
 function switchLang(){
   const next = (window.APP_LANG === 'zh') ? 'en' : 'zh';
-  localStorage.setItem('lang', next);
+  try { localStorage.setItem('lang', next); } catch(e) {}
   location.reload();
 }
 document.getElementById('lang-toggle').addEventListener('click', switchLang);
@@ -3961,14 +4160,15 @@ applyStaticI18n();
 
 (function initTheme(){
   const btn=document.getElementById('theme-toggle');
-  const saved=localStorage.getItem('theme');
+  let saved=null;
+  try { saved=localStorage.getItem('theme'); } catch(e) {}
   document.documentElement.dataset.theme=saved||'dark';
   syncLabel();
   btn.addEventListener('click',()=>{
     const cur=document.documentElement.dataset.theme==='dark'?'dark':'light';
     const next=cur==='dark'?'light':'dark';
     document.documentElement.dataset.theme=next;
-    localStorage.setItem('theme',next);
+    try { localStorage.setItem('theme',next); } catch(e) {}
     syncLabel();
   });
   function syncLabel(){
@@ -3980,15 +4180,22 @@ applyStaticI18n();
 /* 功能说明浮层 */
 (function initHelp(){
   const ov=document.getElementById('help-overlay');
-  document.getElementById('help-toggle').addEventListener('click',()=>ov.classList.add('open'));
+  /* 双语标题并存：aria-labelledby 按当前语言指向对应 h4 */
+  ov.setAttribute('aria-labelledby',
+    (window.APP_LANG === 'en') ? 'help-title-en' : 'help-title-zh');
+  const closeSel=()=> (window.APP_LANG === 'en') ? '#help-close-en' : '#help-close';
+  const open=()=>{ ov.classList.add('open'); focusOverlay(ov, closeSel()); };
+  document.getElementById('help-toggle').addEventListener('click',open);
   document.querySelectorAll('#help-close,#help-close-en').forEach(b =>
-    b.addEventListener('click',()=>ov.classList.remove('open')));
-  ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape') ov.classList.remove('open'); });
-  if(!localStorage.getItem('helpSeen')){
-    ov.classList.add('open');
-    localStorage.setItem('helpSeen','1');
-  }
+    b.addEventListener('click',()=>closeOverlay('help-overlay')));
+  ov.addEventListener('click',e=>{ if(e.target===ov) closeOverlay('help-overlay'); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeOverlay('help-overlay'); });
+  let seen=false;
+  try {
+    seen=!!localStorage.getItem('helpSeen');
+    if(!seen) localStorage.setItem('helpSeen','1');
+  } catch(e) { seen=true; /* 存储不可用时不再每次访问都弹 */ }
+  if(!seen) open();
 })();
 </script>
 </body>
